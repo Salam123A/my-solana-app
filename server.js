@@ -63,7 +63,6 @@ async function getHolders() {
     }
 }
 
-// Get rewards transactions
 // Get rewards transactions - ONLY OUTGOING (sends)
 async function getRewardsTransactions() {
     try {
@@ -80,9 +79,13 @@ async function getRewardsTransactions() {
                     maxSupportedTransactionVersion: 0
                 });
                 
-                if (tx && tx.meta) {
-                    // Check if this wallet is the sender (fee payer)
-                    const feePayer = tx.transaction.message.accountKeys[0].pubkey.toString();
+                if (tx && tx.meta && tx.transaction && tx.transaction.message) {
+                    // Safely check if this wallet is the sender (fee payer)
+                    const accountKeys = tx.transaction.message.accountKeys;
+                    if (!accountKeys || accountKeys.length === 0) continue;
+                    
+                    const feePayer = accountKeys[0]?.pubkey?.toString();
+                    if (!feePayer) continue;
                     
                     // Only process if our wallet is the fee payer (sender)
                     if (feePayer === REWARDS_WALLET) {
@@ -96,13 +99,14 @@ async function getRewardsTransactions() {
                         };
                         
                         // Find transfer instructions where our wallet is the sender
-                        if (tx.transaction.message.instructions) {
-                            for (const instruction of tx.transaction.message.instructions) {
+                        const instructions = tx.transaction.message.instructions;
+                        if (instructions) {
+                            for (const instruction of instructions) {
                                 if (instruction.programId && instruction.programId.toString() === '11111111111111111111111111111111') {
                                     // System program transfer
                                     if (instruction.parsed && instruction.parsed.type === 'transfer') {
                                         // Only include if source is our wallet
-                                        if (instruction.parsed.info.source === REWARDS_WALLET) {
+                                        if (instruction.parsed.info && instruction.parsed.info.source === REWARDS_WALLET) {
                                             transfer.to = instruction.parsed.info.destination;
                                             transfer.amount = instruction.parsed.info.lamports / 1e9; // Convert to SOL
                                         }
@@ -128,7 +132,6 @@ async function getRewardsTransactions() {
         console.error("Error fetching rewards transactions:", e.message);
     }
 }
-// Calculate MEGA JACKPOT amount
 function calculateMegaJackpot() {
     const now = Date.now();
     const timePassed = now - cache.megaJackpotStart;
@@ -960,5 +963,6 @@ app.listen(PORT, async () => {
     // Refresh rewards transactions every 2 minutes
     setInterval(getRewardsTransactions, 120000);
 });
+
 
 
