@@ -11,6 +11,7 @@ const REWARDS_WALLET = "7h334Q4r5izKUHzxR8DtuTCYUL8c1YNF7Udfw9kTMM9z";
 let cache = {
     holders: [],
     spinHistory: [],
+        spinAnimationTime: 0, // Add this line
     jokerWallets: new Map(), // wallet -> joker count
     jokerBonusWinners: [], // wallets that reached 3 jokers
     lastSpinTime: Date.now(),
@@ -63,6 +64,7 @@ async function getHolders() {
 }
 
 // Get rewards transactions
+// Get rewards transactions - ONLY OUTGOING (sends)
 async function getRewardsTransactions() {
     try {
         const signatures = await connection.getSignaturesForAddress(
@@ -79,29 +81,41 @@ async function getRewardsTransactions() {
                 });
                 
                 if (tx && tx.meta) {
-                    const transfer = {
-                        signature: signatureInfo.signature,
-                        timestamp: new Date(signatureInfo.blockTime * 1000).toLocaleString(),
-                        from: REWARDS_WALLET,
-                        to: null,
-                        amount: 0,
-                        success: !tx.meta.err
-                    };
+                    // Check if this wallet is the sender (fee payer)
+                    const feePayer = tx.transaction.message.accountKeys[0].pubkey.toString();
                     
-                    // Find transfer instructions
-                    if (tx.transaction.message.instructions) {
-                        for (const instruction of tx.transaction.message.instructions) {
-                            if (instruction.programId && instruction.programId.toString() === '11111111111111111111111111111111') {
-                                // System program transfer
-                                if (instruction.parsed && instruction.parsed.type === 'transfer') {
-                                    transfer.to = instruction.parsed.info.destination;
-                                    transfer.amount = instruction.parsed.info.lamports / 1e9; // Convert to SOL
+                    // Only process if our wallet is the fee payer (sender)
+                    if (feePayer === REWARDS_WALLET) {
+                        const transfer = {
+                            signature: signatureInfo.signature,
+                            timestamp: new Date(signatureInfo.blockTime * 1000).toLocaleString(),
+                            from: REWARDS_WALLET,
+                            to: null,
+                            amount: 0,
+                            success: !tx.meta.err
+                        };
+                        
+                        // Find transfer instructions where our wallet is the sender
+                        if (tx.transaction.message.instructions) {
+                            for (const instruction of tx.transaction.message.instructions) {
+                                if (instruction.programId && instruction.programId.toString() === '11111111111111111111111111111111') {
+                                    // System program transfer
+                                    if (instruction.parsed && instruction.parsed.type === 'transfer') {
+                                        // Only include if source is our wallet
+                                        if (instruction.parsed.info.source === REWARDS_WALLET) {
+                                            transfer.to = instruction.parsed.info.destination;
+                                            transfer.amount = instruction.parsed.info.lamports / 1e9; // Convert to SOL
+                                        }
+                                    }
                                 }
                             }
                         }
+                        
+                        // Only add if we found a destination (outgoing transfer)
+                        if (transfer.to) {
+                            transactions.push(transfer);
+                        }
                     }
-                    
-                    transactions.push(transfer);
                 }
             } catch (error) {
                 console.log('Error fetching transaction details:', error.message);
@@ -109,12 +123,11 @@ async function getRewardsTransactions() {
         }
         
         cache.rewardsTransactions = transactions;
-        console.log(`Loaded ${transactions.length} rewards transactions`);
+        console.log(`Loaded ${transactions.length} outgoing rewards transactions`);
     } catch (e) {
         console.error("Error fetching rewards transactions:", e.message);
     }
 }
-
 // Calculate MEGA JACKPOT amount
 function calculateMegaJackpot() {
     const now = Date.now();
@@ -130,7 +143,16 @@ function getMegaJackpotTime() {
     const timeLeft = endTime - Date.now();
     return Math.max(0, timeLeft);
 }
-
+// In the autoSpin function, add animation tracking:
+function autoSpin() {
+    if (!cache.isSpinning && cache.holders.length > 0) {
+        cache.isSpinning = true;
+        cache.spinAnimationTime = Date.now() + 4000; // Animation ends in 4 seconds
+        console.log('🔄 SERVER: Auto-spin triggered');
+        spinWheel();
+        cache.isSpinning = false;
+    }
+}
 // Spin the wheel with COMPLETELY RANDOM selection and JOKER RESPIN
 function spinWheel() {
     if (cache.holders.length === 0) return null;
@@ -813,6 +835,59 @@ app.get("/", (req, res) => {
     <audio id="jokerSound" src="https://assets.mixkit.co/sfx/preview/mixkit-extra-bonus-in-a-video-game-2043.mp3"></audio>
 
     <script>
+            // Check if we should show spinning animation
+        function shouldShowSpinning() {
+            const now = Date.now();
+            return ${cache.isSpinning} || (${cache.spinAnimationTime || 0} > now);
+        }
+
+        // Create wheel slices with holder addresses
+        function createWheelSlices() {
+            const wheel = document.getElementById('wheel');
+            // Clear existing slices except center and current winner
+            const currentWinnerDiv = document.getElementById('current-winner');
+            const wheelCenter = document.querySelector('.wheel-center');
+            wheel.innerHTML = '';
+            wheel.appendChild(currentWinnerDiv);
+            wheel.appendChild(wheelCenter);
+            
+            const sliceCount = Math.min(${cache.holders.length}, 24);
+            const angle = 360 / sliceCount;
+            
+            // Get all holders for the wheel (random selection, no weighting)
+            const wheelHolders = ${JSON.stringify(cache.holders)}.slice(0, sliceCount);
+            
+            wheelHolders.forEach((holder, index) => {
+                const slice = document.createElement('div');
+                slice.className = 'wheel-slice';
+                slice.style.transform = \`rotate(\${index * angle}deg)\`;
+                
+                const shortAddress = \`\${holder.owner.slice(0, 4)}...\${holder.owner.slice(-3)}\`;
+                slice.innerHTML = \`
+                    <div style="transform: rotate(\${90 - angle/2}deg); transform-origin: left center;">
+                        \${shortAddress}
+                    </div>
+                \`;
+                
+                wheel.appendChild(slice);
+            });
+        }
+
+        // Wheel animation for visual effect
+        function animateWheel() {
+            const wheel = document.getElementById('wheel');
+            wheel.classList.add('wheel-spinning');
+            
+            setTimeout(() => {
+                wheel.classList.remove('wheel-spinning');
+            }, 4000);
+        }
+
+        // Initialize and check for spinning
+        createWheelSlices();
+        if (shouldShowSpinning()) {
+            animateWheel();
+        }
         // Create wheel slices with holder addresses
         function createWheelSlices() {
             const wheel = document.getElementById('wheel');
@@ -941,3 +1016,4 @@ app.listen(PORT, async () => {
     // Refresh rewards transactions every 2 minutes
     setInterval(getRewardsTransactions, 120000);
 });
+
