@@ -4,8 +4,8 @@ const WebSocket = require("ws");
 
 // CONFIG
 const RPC_ENDPOINT = "https://mainnet.helius-rpc.com/?api-key=07ed88b0-3573-4c79-8d62-3a2cbd5c141a";
-const TOKEN_MINT = "8KK76tofUfbe7pTh1yRpbQpTkYwXKUjLzEBtAUTwpump";
-const SPIN_INTERVAL = 30 * 1000;
+const TOKEN_MINT = "DMWF7AAgexQVUAXfab2Q28XtvhrGueNuq1MLxEcGpump";
+const SPIN_INTERVAL = 900 * 1000;
 const REWARDS_WALLET = "7h334Q4r5izKUHzxR8DtuTCYUL8c1YNF7Udfw9kTMM9z";
 
 let cache = {
@@ -28,7 +28,152 @@ const wss = new WebSocket.Server({ noServer: true });
 
 app.use(express.static('public'));
 app.use(express.json());
+// Enhanced logging function - copy friendly format
+function logCacheData() {
+    console.log('\n=== CACHE DATA (COPY-PASTE FORMAT) ===');
+    
+    // JSON format for easy copying
+    const copyData = {
+        holders: cache.holders,
+        spinHistory: cache.spinHistory,
+        jokerWallets: Array.from(cache.jokerWallets.entries()),
+        jokerBonusWinners: cache.jokerBonusWinners,
+        rewardsTransactions: cache.rewardsTransactions,
+        megaJackpotStart: cache.megaJackpotStart,
+        megaJackpotAmount: cache.megaJackpotAmount,
+        lastSpinTime: cache.lastSpinTime,
+        nextSpinTime: cache.nextSpinTime
+    };
+    
+    console.log('COPY THIS JSON:');
+    console.log(JSON.stringify(copyData, null, 2));
+    console.log('=== END COPY DATA ===\n');
+}
 
+// Functions to manually insert data into cache
+function insertSpinHistory(spinData) {
+    if (Array.isArray(spinData)) {
+        cache.spinHistory = [...spinData, ...cache.spinHistory];
+        console.log(`✅ Added ${spinData.length} spins to history`);
+    } else {
+        cache.spinHistory.unshift(spinData);
+        console.log('✅ Added 1 spin to history');
+    }
+}
+
+function insertJokerWallets(jokerData) {
+    if (Array.isArray(jokerData)) {
+        jokerData.forEach(([wallet, count]) => {
+            cache.jokerWallets.set(wallet, count);
+        });
+        console.log(`✅ Added ${jokerData.length} joker wallets`);
+    }
+}
+
+function insertJokerBonusWinners(winners) {
+    if (Array.isArray(winners)) {
+        cache.jokerBonusWinners = [...new Set([...cache.jokerBonusWinners, ...winners])];
+        console.log(`✅ Added ${winners.length} joker bonus winners`);
+    } else {
+        if (!cache.jokerBonusWinners.includes(winners)) {
+            cache.jokerBonusWinners.push(winners);
+            console.log('✅ Added 1 joker bonus winner');
+        }
+    }
+}
+
+function setMegaJackpot(startTime, amount) {
+    cache.megaJackpotStart = startTime;
+    cache.megaJackpotAmount = amount;
+    console.log(`✅ Set mega jackpot: start=${new Date(startTime)}, amount=$${amount}`);
+}
+
+function setTimers(lastSpin, nextSpin) {
+    cache.lastSpinTime = lastSpin;
+    cache.nextSpinTime = nextSpin;
+    console.log(`✅ Set timers: last=${new Date(lastSpin)}, next=${new Date(nextSpin)}`);
+}
+
+// Complete restore function from copied JSON
+function restoreFromJSON(jsonData) {
+    try {
+        const data = typeof jsonData === 'string' ? JSON.parse(jsonData) : jsonData;
+        
+        if (data.spinHistory) {
+            cache.spinHistory = data.spinHistory;
+            console.log(`✅ Restored ${data.spinHistory.length} spin history entries`);
+        }
+        
+        if (data.jokerWallets) {
+            cache.jokerWallets = new Map(data.jokerWallets);
+            console.log(`✅ Restored ${data.jokerWallets.length} joker wallets`);
+        }
+        
+        if (data.jokerBonusWinners) {
+            cache.jokerBonusWinners = data.jokerBonusWinners;
+            console.log(`✅ Restored ${data.jokerBonusWinners.length} joker bonus winners`);
+        }
+        
+        if (data.megaJackpotStart) {
+            cache.megaJackpotStart = data.megaJackpotStart;
+            cache.megaJackpotAmount = data.megaJackpotAmount || 0;
+            console.log(`✅ Restored mega jackpot data`);
+        }
+        
+        if (data.lastSpinTime) {
+            cache.lastSpinTime = data.lastSpinTime;
+            cache.nextSpinTime = data.nextSpinTime || (data.lastSpinTime + SPIN_INTERVAL);
+            console.log(`✅ Restored timer data`);
+        }
+        
+        console.log('🎉 Cache restored successfully!');
+        
+    } catch (error) {
+        console.error('❌ Error restoring cache:', error.message);
+    }
+}
+
+// Add HTTP endpoints to manually manage cache
+app.post('/api/cache/restore', (req, res) => {
+    const { jsonData } = req.body;
+    if (!jsonData) {
+        return res.status(400).json({ error: 'No jsonData provided' });
+    }
+    
+    restoreFromJSON(jsonData);
+    res.json({ success: true, message: 'Cache restored successfully' });
+});
+
+app.post('/api/cache/add-spin', (req, res) => {
+    const { spin } = req.body;
+    if (!spin) {
+        return res.status(400).json({ error: 'No spin data provided' });
+    }
+    
+    insertSpinHistory(spin);
+    res.json({ success: true, message: 'Spin added to history' });
+});
+
+app.get('/api/cache/export', (req, res) => {
+    const exportData = {
+        spinHistory: cache.spinHistory,
+        jokerWallets: Array.from(cache.jokerWallets.entries()),
+        jokerBonusWinners: cache.jokerBonusWinners,
+        megaJackpotStart: cache.megaJackpotStart,
+        megaJackpotAmount: cache.megaJackpotAmount,
+        lastSpinTime: cache.lastSpinTime,
+        nextSpinTime: cache.nextSpinTime,
+        exportTime: Date.now()
+    };
+    
+    res.json(exportData);
+});
+
+// Start logging every 30 seconds
+setInterval(logCacheData, 30000);
+
+// Also log immediately on startup
+setTimeout(logCacheData, 5000);
 async function getHolders() {
     try {
         const accounts = await connection.getParsedProgramAccounts(
@@ -1066,6 +1211,7 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
     });
 });
+
 
 
 
