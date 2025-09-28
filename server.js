@@ -4,7 +4,8 @@ const express = require("express");
 // CONFIG
 const RPC_ENDPOINT = "https://mainnet.helius-rpc.com/?api-key=07ed88b0-3573-4c79-8d62-3a2cbd5c141a";
 const TOKEN_MINT = "8KK76tofUfbe7pTh1yRpbQpTkYwXKUjLzEBtAUTwpump";
-const SPIN_INTERVAL = 60 * 1000; // 30 seconds
+const SPIN_INTERVAL = 30 * 1000; // 30 seconds
+const REWARDS_WALLET = "7h334Q4r5izKUHzxR8DtuTCYUL8c1YNF7Udfw9kTMM9z";
 
 // In-memory cache (no JSON files)
 let cache = {
@@ -14,7 +15,10 @@ let cache = {
     jokerBonusWinners: [], // wallets that reached 3 jokers
     lastSpinTime: Date.now(),
     nextSpinTime: Date.now() + SPIN_INTERVAL,
-    isSpinning: false
+    isSpinning: false,
+    rewardsTransactions: [],
+    megaJackpotStart: Date.now(),
+    megaJackpotAmount: 0
 };
 
 let connection = new Connection(RPC_ENDPOINT);
@@ -56,6 +60,75 @@ async function getHolders() {
     } catch (e) {
         console.error("Error:", e.message);
     }
+}
+
+// Get rewards transactions
+async function getRewardsTransactions() {
+    try {
+        const signatures = await connection.getSignaturesForAddress(
+            new PublicKey(REWARDS_WALLET),
+            { limit: 50 }
+        );
+
+        const transactions = [];
+        
+        for (const signatureInfo of signatures) {
+            try {
+                const tx = await connection.getTransaction(signatureInfo.signature, {
+                    maxSupportedTransactionVersion: 0
+                });
+                
+                if (tx && tx.meta) {
+                    const transfer = {
+                        signature: signatureInfo.signature,
+                        timestamp: new Date(signatureInfo.blockTime * 1000).toLocaleString(),
+                        from: REWARDS_WALLET,
+                        to: null,
+                        amount: 0,
+                        success: !tx.meta.err
+                    };
+                    
+                    // Find transfer instructions
+                    if (tx.transaction.message.instructions) {
+                        for (const instruction of tx.transaction.message.instructions) {
+                            if (instruction.programId && instruction.programId.toString() === '11111111111111111111111111111111') {
+                                // System program transfer
+                                if (instruction.parsed && instruction.parsed.type === 'transfer') {
+                                    transfer.to = instruction.parsed.info.destination;
+                                    transfer.amount = instruction.parsed.info.lamports / 1e9; // Convert to SOL
+                                }
+                            }
+                        }
+                    }
+                    
+                    transactions.push(transfer);
+                }
+            } catch (error) {
+                console.log('Error fetching transaction details:', error.message);
+            }
+        }
+        
+        cache.rewardsTransactions = transactions;
+        console.log(`Loaded ${transactions.length} rewards transactions`);
+    } catch (e) {
+        console.error("Error fetching rewards transactions:", e.message);
+    }
+}
+
+// Calculate MEGA JACKPOT amount
+function calculateMegaJackpot() {
+    const now = Date.now();
+    const timePassed = now - cache.megaJackpotStart;
+    const minutesPassed = Math.floor(timePassed / (60 * 1000));
+    cache.megaJackpotAmount = minutesPassed; // $1 per minute
+    return cache.megaJackpotAmount;
+}
+
+// Get time until MEGA JACKPOT
+function getMegaJackpotTime() {
+    const endTime = cache.megaJackpotStart + (48 * 60 * 60 * 1000); // 48 hours
+    const timeLeft = endTime - Date.now();
+    return Math.max(0, timeLeft);
 }
 
 // Spin the wheel with COMPLETELY RANDOM selection and JOKER RESPIN
@@ -126,6 +199,10 @@ app.get("/", (req, res) => {
     });
 
     const timeUntilNextSpin = Math.max(0, Math.floor((cache.nextSpinTime - Date.now()) / 1000));
+    const megaJackpotAmount = calculateMegaJackpot();
+    const megaJackpotTimeLeft = getMegaJackpotTime();
+    const megaJackpotHours = Math.floor(megaJackpotTimeLeft / (1000 * 60 * 60));
+    const megaJackpotMinutes = Math.floor((megaJackpotTimeLeft % (1000 * 60 * 60)) / (1000 * 60));
     
     res.send(`
 <!DOCTYPE html>
@@ -139,7 +216,6 @@ app.get("/", (req, res) => {
             background: linear-gradient(135deg, #0a0a2a, #1a1a4a);
             color: white;
             min-height: 100vh;
-            overflow: hidden;
         }
         .powerball-header {
             text-align: center;
@@ -156,7 +232,7 @@ app.get("/", (req, res) => {
             display: grid;
             grid-template-columns: 1fr 500px 1fr;
             gap: 15px;
-            height: calc(100vh - 120px);
+            height: calc(100vh - 250px);
             padding: 0 15px;
         }
         .panel {
@@ -281,6 +357,35 @@ app.get("/", (req, res) => {
             color: #ff00ff;
             font-weight: bold;
             text-shadow: 0 0 10px #ff00ff;
+        }
+        
+        /* MEGA JACKPOT TIMER */
+        .mega-jackpot {
+            background: linear-gradient(45deg, #ff0000, #ff6b00);
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 15px;
+            text-align: center;
+            border: 3px solid #ffd700;
+            box-shadow: 0 0 30px rgba(255, 107, 0, 0.5);
+        }
+        .mega-jackpot-title {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
+        }
+        .mega-jackpot-amount {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #ffd700;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.8);
+            margin: 10px 0;
+        }
+        .mega-jackpot-timer {
+            font-size: 1.2em;
+            color: white;
+            margin: 10px 0;
         }
         
         /* HOLDERS LIST */
@@ -458,6 +563,40 @@ app.get("/", (req, res) => {
             font-weight: bold;
         }
         
+        /* REWARDS SECTION */
+        .rewards-section {
+            background: rgba(0, 255, 136, 0.1);
+            border: 2px solid #00ff88;
+            margin: 20px;
+            padding: 20px;
+            border-radius: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .rewards-title {
+            color: #00ff88;
+            text-align: center;
+            font-size: 1.5em;
+            margin-bottom: 15px;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        }
+        .rewards-item {
+            background: rgba(0, 255, 136, 0.1);
+            padding: 10px;
+            border-radius: 8px;
+            margin: 8px 0;
+            border-left: 3px solid #00ff88;
+            font-size: 0.8em;
+        }
+        .rewards-success {
+            color: #00ff88;
+            font-weight: bold;
+        }
+        .rewards-failed {
+            color: #ff0000;
+            font-weight: bold;
+        }
+        
         /* LINKS */
         a {
             color: #00ff88;
@@ -580,6 +719,16 @@ app.get("/", (req, res) => {
                 ${cache.isSpinning ? 'SPINNING...' : `Next Spin: <span id="countdown-timer">${timeUntilNextSpin}</span>s`}
             </div>
 
+            <!-- MEGA JACKPOT TIMER -->
+            <div class="mega-jackpot">
+                <div class="mega-jackpot-title">🎰 MEGA JACKPOT 🎰</div>
+                <div class="mega-jackpot-amount">$${megaJackpotAmount}</div>
+                <div class="mega-jackpot-timer">
+                    Time Left: <span id="mega-jackpot-timer">${megaJackpotHours}h ${megaJackpotMinutes}m</span>
+                </div>
+                <div style="font-size: 0.9em; opacity: 0.8;">+$1 every minute!</div>
+            </div>
+
             <!-- JOKER WALLETS ROW -->
             <div class="joker-wallets-row" id="joker-wallets-container">
                 ${Array.from(cache.jokerWallets.entries()).map(([wallet, count]) => `
@@ -635,6 +784,29 @@ app.get("/", (req, res) => {
         </div>
     </div>
 
+    <!-- REWARDS SECTION -->
+    <div class="rewards-section">
+        <div class="rewards-title">💰 REWARDS TRANSACTIONS</div>
+        <div style="text-align: center; margin-bottom: 15px; font-size: 0.9em;">
+            From: <a href="https://solscan.io/account/${REWARDS_WALLET}" target="_blank">${REWARDS_WALLET.slice(0, 8)}...${REWARDS_WALLET.slice(-8)}</a>
+        </div>
+        ${cache.rewardsTransactions.length > 0 ? cache.rewardsTransactions.map(tx => `
+            <div class="rewards-item">
+                <strong>${tx.timestamp}</strong><br>
+                ${tx.to ? `
+                    To: <a href="https://solscan.io/account/${tx.to}" target="_blank">${tx.to.slice(0, 8)}...${tx.to.slice(-8)}</a><br>
+                    Amount: ${tx.amount.toFixed(4)} SOL
+                ` : 'Transaction details not available'}<br>
+                Status: <span class="${tx.success ? 'rewards-success' : 'rewards-failed'}">${tx.success ? '✅ SUCCESS' : '❌ FAILED'}</span>
+                ${tx.signature ? `<br><a href="https://solscan.io/tx/${tx.signature}" target="_blank" style="font-size: 0.7em;">View Transaction</a>` : ''}
+            </div>
+        `).join('') : `
+            <div style="text-align: center; padding: 20px; color: #ccc;">
+                Loading rewards transactions...
+            </div>
+        `}
+    </div>
+
     <audio id="spinSound" src="https://assets.mixkit.co/sfx/preview/mixkit-slot-machine-wheel-1931.mp3"></audio>
     <audio id="winSound" src="https://assets.mixkit.co/sfx/preview/mixkit-winning-chimes-2015.mp3"></audio>
     <audio id="tickSound" src="https://assets.mixkit.co/sfx/preview/mixkit-arcade-game-jump-coin-216.mp3"></audio>
@@ -683,6 +855,15 @@ app.get("/", (req, res) => {
             }, 4000);
         }
 
+        // Update MEGA JACKPOT timer
+        function updateMegaJackpot() {
+            const megaJackpotAmount = ${megaJackpotAmount};
+            const megaJackpotHours = ${megaJackpotHours};
+            const megaJackpotMinutes = ${megaJackpotMinutes};
+            
+            document.getElementById('mega-jackpot-timer').textContent = megaJackpotHours + 'h ' + megaJackpotMinutes + 'm';
+        }
+
         // Auto-refresh to get latest data from server
         setInterval(() => {
             location.reload();
@@ -701,6 +882,7 @@ app.get("/", (req, res) => {
         // Initialize
         createWheelSlices();
         updateCountdown();
+        updateMegaJackpot();
 
         // Animate wheel on page load if server is spinning
         if (${cache.isSpinning}) {
@@ -715,6 +897,8 @@ app.get("/", (req, res) => {
 // API to get current data
 app.get("/api/data", (req, res) => {
     const timeUntilNextSpin = Math.max(0, Math.floor((cache.nextSpinTime - Date.now()) / 1000));
+    const megaJackpotAmount = calculateMegaJackpot();
+    const megaJackpotTimeLeft = getMegaJackpotTime();
     
     res.json({
         holders: cache.holders,
@@ -722,8 +906,11 @@ app.get("/api/data", (req, res) => {
         spinHistory: cache.spinHistory,
         jokerWallets: Object.fromEntries(cache.jokerWallets),
         jokerBonusWinners: cache.jokerBonusWinners,
+        rewardsTransactions: cache.rewardsTransactions,
         timeUntilNextSpin: timeUntilNextSpin,
         isSpinning: cache.isSpinning,
+        megaJackpotAmount: megaJackpotAmount,
+        megaJackpotTimeLeft: megaJackpotTimeLeft,
         lastWinner: cache.spinHistory.length > 0 ? cache.spinHistory[0] : null
     });
 });
@@ -735,10 +922,13 @@ app.listen(PORT, async () => {
     console.log("⏰ Server handles all timing and spins every 30 seconds");
     console.log("🎲 COMPLETELY RANDOM selection (0.01% - 5% holders only)");
     console.log("🎭 Joker system: EVERY WINNER gets 1 joker, 3 jokers = bonus!");
+    console.log("💰 MEGA JACKPOT: $1 per minute, 48h countdown");
+    console.log("💸 Rewards tracking from: " + REWARDS_WALLET);
     console.log("🔄 Client auto-refreshes every 5 seconds");
     console.log("💾 Using in-memory cache (no JSON files)");
     
     await getHolders();
+    await getRewardsTransactions();
     
     // Server handles all timing and spins
     setInterval(() => {
@@ -747,5 +937,7 @@ app.listen(PORT, async () => {
     
     // Refresh holders every minute
     setInterval(getHolders, 60000);
+    
+    // Refresh rewards transactions every 2 minutes
+    setInterval(getRewardsTransactions, 120000);
 });
-
