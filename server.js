@@ -139,7 +139,7 @@ app.get("/", (req, res) => {
             background: linear-gradient(135deg, #0a0a2a, #1a1a4a);
             color: white;
             min-height: 100vh;
-
+            overflow: hidden;
         }
         .powerball-header {
             text-align: center;
@@ -195,6 +195,7 @@ app.get("/", (req, res) => {
             overflow: hidden;
             border: 8px solid #ffd700;
             box-shadow: 0 0 30px rgba(255, 215, 0, 0.5);
+            transition: transform 4s cubic-bezier(0.2, 0.8, 0.2, 1);
         }
         .wheel-spinning {
             animation: spin 0.1s linear infinite;
@@ -468,6 +469,27 @@ app.get("/", (req, res) => {
             text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
         }
         
+        /* WINNER POPUP */
+        .winner-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(45deg, #ff0000, #ff6b00);
+            padding: 30px;
+            border-radius: 20px;
+            text-align: center;
+            z-index: 1000;
+            box-shadow: 0 0 60px rgba(255, 0, 0, 0.9);
+            animation: popup 0.5s ease-out;
+            border: 4px solid #ffd700;
+            max-width: 400px;
+        }
+        @keyframes popup {
+            from { transform: translate(-50%, -50%) scale(0); opacity: 0; }
+            to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        }
+        
         /* SCROLLBARS */
         ::-webkit-scrollbar {
             width: 6px;
@@ -544,7 +566,6 @@ app.get("/", (req, res) => {
                             </div>
                             <div class="winner-stats">
                                 ${cache.spinHistory[0].tokens.toLocaleString()} tokens<br>
-                                ${cache.spinHistory[0].percentage}%
                             </div>
                             ${cache.spinHistory[0].gotJoker ? `<div class="joker-indicator" style="margin-top: 5px;">🎭 ${cache.spinHistory[0].jokerCount}/3</div>` : ''}
                         ` : `
@@ -606,7 +627,7 @@ app.get("/", (req, res) => {
                         <a href="https://solscan.io/account/${spin.address}" target="_blank">
                             ${spin.address.slice(0, 8)}...${spin.address.slice(-8)}
                         </a><br>
-       ${spin.tokens.toLocaleString()} tokens
+                        ${spin.tokens.toLocaleString()} tokens
                         ${spin.gotJoker ? `<br><small class="joker-indicator">+1 Joker (${spin.jokerCount}/3)</small>` : ''}
                     </div>
                 `).join('')}
@@ -614,8 +635,55 @@ app.get("/", (req, res) => {
         </div>
     </div>
 
+    <audio id="spinSound" src="https://assets.mixkit.co/sfx/preview/mixkit-slot-machine-wheel-1931.mp3"></audio>
+    <audio id="winSound" src="https://assets.mixkit.co/sfx/preview/mixkit-winning-chimes-2015.mp3"></audio>
+    <audio id="tickSound" src="https://assets.mixkit.co/sfx/preview/mixkit-arcade-game-jump-coin-216.mp3"></audio>
+    <audio id="jokerSound" src="https://assets.mixkit.co/sfx/preview/mixkit-extra-bonus-in-a-video-game-2043.mp3"></audio>
+
     <script>
-        // Simple auto-refresh to get latest data from server
+        // Create wheel slices with holder addresses
+        function createWheelSlices() {
+            const wheel = document.getElementById('wheel');
+            // Clear existing slices except center and current winner
+            const currentWinnerDiv = document.getElementById('current-winner');
+            const wheelCenter = document.querySelector('.wheel-center');
+            wheel.innerHTML = '';
+            wheel.appendChild(currentWinnerDiv);
+            wheel.appendChild(wheelCenter);
+            
+            const sliceCount = Math.min(${cache.holders.length}, 24);
+            const angle = 360 / sliceCount;
+            
+            // Get all holders for the wheel (random selection, no weighting)
+            const wheelHolders = ${JSON.stringify(cache.holders)}.slice(0, sliceCount);
+            
+            wheelHolders.forEach((holder, index) => {
+                const slice = document.createElement('div');
+                slice.className = 'wheel-slice';
+                slice.style.transform = \`rotate(\${index * angle}deg)\`;
+                
+                const shortAddress = \`\${holder.owner.slice(0, 4)}...\${holder.owner.slice(-3)}\`;
+                slice.innerHTML = \`
+                    <div style="transform: rotate(\${90 - angle/2}deg); transform-origin: left center;">
+                        \${shortAddress}
+                    </div>
+                \`;
+                
+                wheel.appendChild(slice);
+            });
+        }
+
+        // Wheel animation for visual effect
+        function animateWheel() {
+            const wheel = document.getElementById('wheel');
+            wheel.classList.add('wheel-spinning');
+            
+            setTimeout(() => {
+                wheel.classList.remove('wheel-spinning');
+            }, 4000);
+        }
+
+        // Auto-refresh to get latest data from server
         setInterval(() => {
             location.reload();
         }, 5000); // Refresh every 5 seconds to get latest data
@@ -630,8 +698,14 @@ app.get("/", (req, res) => {
             }
         }
         
-        // Initial update
+        // Initialize
+        createWheelSlices();
         updateCountdown();
+
+        // Animate wheel on page load if server is spinning
+        if (${cache.isSpinning}) {
+            animateWheel();
+        }
     </script>
 </body>
 </html>
