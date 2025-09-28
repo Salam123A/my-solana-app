@@ -750,32 +750,7 @@ app.get("/", (req, res) => {
                 <div style="font-size: 0.9em; opacity: 0.8;">+$1 every minute!</div>
             </div>
 
-            <div class="joker-wallets-row" id="joker-wallets-container">
-                ${Array.from(cache.jokerWallets.entries()).map(([wallet, count]) => `
-                    <div class="joker-wallet-item">
-                        <a href="https://solscan.io/account/${wallet}" target="_blank">
-                            ${wallet.slice(0, 6)}...${wallet.slice(-4)}
-                        </a>
-                        <div class="joker-wallet-jokers">${count}</div>
-                    </div>
-                `).join('')}
-            </div>
-
-            ${cache.jokerBonusWinners.length > 0 ? `
-            <div class="joker-bonus-section">
-                <div class="joker-bonus-title">🎉 JOKER BONUS WINNERS 🎉</div>
-                ${cache.jokerBonusWinners.map(wallet => {
-                    const jokerCount = cache.jokerWallets.get(wallet) || 0;
-                    return `
-                    <div class="joker-bonus-item">
-                        <span class="joker-bonus-badge">3</span>
-                        <a href="https://solscan.io/account/${wallet}" target="_blank">
-                            ${wallet.slice(0, 8)}...${wallet.slice(-8)}
-                        </a>
-                        <span style="margin-left: 5px; color: #ff00ff;">(${jokerCount} jokers)</span>
-                    </div>
-                `}).join('')}
-            </div>
+      
             ` : ''}
         </div>
 
@@ -823,7 +798,32 @@ app.get("/", (req, res) => {
             </div>
         `}
     </div>
+      <div class="joker-wallets-row" id="joker-wallets-container">
+                ${Array.from(cache.jokerWallets.entries()).map(([wallet, count]) => `
+                    <div class="joker-wallet-item">
+                        <a href="https://solscan.io/account/${wallet}" target="_blank">
+                            ${wallet.slice(0, 6)}...${wallet.slice(-4)}
+                        </a>
+                        <div class="joker-wallet-jokers">${count}</div>
+                    </div>
+                `).join('')}
+            </div>
 
+            ${cache.jokerBonusWinners.length > 0 ? `
+            <div class="joker-bonus-section">
+                <div class="joker-bonus-title">🎉 JOKER BONUS WINNERS 🎉</div>
+                ${cache.jokerBonusWinners.map(wallet => {
+                    const jokerCount = cache.jokerWallets.get(wallet) || 0;
+                    return `
+                    <div class="joker-bonus-item">
+                        <span class="joker-bonus-badge">3</span>
+                        <a href="https://solscan.io/account/${wallet}" target="_blank">
+                            ${wallet.slice(0, 8)}...${wallet.slice(-8)}
+                        </a>
+                        <span style="margin-left: 5px; color: #ff00ff;">(${jokerCount} jokers)</span>
+                    </div>
+                `}).join('')}
+            </div>
     <script>
         let ws;
         let isSpinning = false;
@@ -1062,3 +1062,4 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
     });
 });
+
