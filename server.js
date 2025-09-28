@@ -690,7 +690,10 @@ app.get("/", (req, res) => {
             <div class="stat-number joker-stat" id="joker-count">${cache.jokerWallets.size}</div>
             <div class="stat-label">JOKER WALLETS</div>
         </div>
-
+        <div class="stat-card">
+            <div class="stat-number" id="next-spin">${timeUntilNextSpin}s</div>
+            <div class="stat-label">NEXT SPIN</div>
+        </div>
     </div>
 
 <div class="main-container">
@@ -1063,6 +1066,7 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
     });
 });
+
 
 
 
