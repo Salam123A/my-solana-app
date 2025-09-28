@@ -4,7 +4,7 @@ const express = require("express");
 // CONFIG
 const RPC_ENDPOINT = "https://mainnet.helius-rpc.com/?api-key=07ed88b0-3573-4c79-8d62-3a2cbd5c141a";
 const TOKEN_MINT = "8KK76tofUfbe7pTh1yRpbQpTkYwXKUjLzEBtAUTwpump";
-const SPIN_INTERVAL = 30 * 1000; // 30 seconds
+const SPIN_INTERVAL = 600 * 1000; // 30 seconds
 const REWARDS_WALLET = "7h334Q4r5izKUHzxR8DtuTCYUL8c1YNF7Udfw9kTMM9z";
 
 // In-memory cache (no JSON files)
@@ -797,7 +797,7 @@ app.get("/", (req, res) => {
 
         <!-- RIGHT PANEL - HISTORY -->
         <div class="panel">
-            <div class="panel-title">📜 SPIN HISTORY</div>
+            <div class="panel-title">📜 WIN HISTORY</div>
             <div class="history-list" id="history-list">
                 ${cache.spinHistory.map(spin => `
                     <div class="history-item">
@@ -1004,6 +1004,7 @@ app.listen(PORT, async () => {
     // Refresh rewards transactions every 2 minutes
     setInterval(getRewardsTransactions, 120000);
 });
+
 
 
 
