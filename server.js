@@ -11,15 +11,17 @@ const REWARDS_WALLET = "7h334Q4r5izKUHzxR8DtuTCYUL8c1YNF7Udfw9kTMM9z";
 let cache = {
     holders: [],
     spinHistory: [],
-        spinAnimationTime: 0, // Add this line
-    jokerWallets: new Map(), // wallet -> joker count
-    jokerBonusWinners: [], // wallets that reached 3 jokers
+    spinAnimationTime: 0,
+    jokerWallets: new Map(),
+    jokerBonusWinners: [],
     lastSpinTime: Date.now(),
     nextSpinTime: Date.now() + SPIN_INTERVAL,
     isSpinning: false,
     rewardsTransactions: [],
     megaJackpotStart: Date.now(),
-    megaJackpotAmount: 0
+    megaJackpotAmount: 0,
+    shouldAnimate: false,        // ADD THIS
+    animationEndTime: 0          // ADD THIS
 };
 
 let connection = new Connection(RPC_ENDPOINT);
@@ -157,6 +159,10 @@ function spinWheel() {
     
     if (!winnerHolder) return null;
     
+    // Set flag to trigger animation on client side
+    cache.shouldAnimate = true;
+    cache.animationEndTime = Date.now() + 5000; // 5 seconds of animation time
+    
     // EVERY WINNER GETS A JOKER
     const getsJoker = true;
     let jokerCount = cache.jokerWallets.get(winnerHolder.owner) || 0;
@@ -204,6 +210,11 @@ function autoSpin() {
         console.log('🔄 SERVER: Auto-spin triggered');
         spinWheel();
         cache.isSpinning = false;
+        
+        // Reset animation flag after a delay
+        setTimeout(() => {
+            cache.shouldAnimate = false;
+        }, 5000);
     }
 }
 
@@ -545,7 +556,15 @@ app.get("/", (req, res) => {
             color: #ff00ff;
             text-shadow: 0 0 10px rgba(255, 0, 255, 0.5);
         }
-        
+        /* Add these to your existing CSS in the first code */
+.wheel-spinning {
+    animation: spin 0.1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
         /* JOKER WALLETS ROW */
         .joker-wallets-row {
             display: flex;
@@ -663,7 +682,7 @@ app.get("/", (req, res) => {
     </style>
 </head>
 <body>
-  🎡  <h1 class="powerball-header"> POWERBALL WHEEL </h1>  🎡
+  <h1 class="powerball-header"> 🎡  POWERBALL WHEEL  🎡 </h1> 
     
     <div class="stats-bar">
         <div class="stat-card">
@@ -829,11 +848,29 @@ app.get("/", (req, res) => {
     <audio id="jokerSound" src="https://assets.mixkit.co/sfx/preview/mixkit-extra-bonus-in-a-video-game-2043.mp3"></audio>
 
     <script>
-        // Check if we should show spinning animation
-        function shouldShowSpinning() {
-            const now = Date.now();
-            return ${cache.isSpinning} || (${cache.spinAnimationTime || 0} > now);
-        }
+// Check if we should show spinning animation
+function shouldShowSpinning() {
+    const now = Date.now();
+    return ${cache.isSpinning} || (${cache.animationEndTime} > now);
+}
+function animateWheel() {
+    const wheel = document.getElementById('wheel');
+    wheel.classList.add('wheel-spinning');
+    
+    setTimeout(() => {
+        wheel.classList.remove('wheel-spinning');
+        wheel.style.transform = 'rotate(0deg)';
+    }, 4000);
+}
+// Initialize
+createWheelSlices();
+updateCountdown();
+updateMegaJackpot();
+
+// Animate wheel on page load if we should show spinning
+if (shouldShowSpinning()) {
+    animateWheel();
+}
 
         // Create wheel slices with holder addresses
         function createWheelSlices() {
@@ -868,14 +905,18 @@ app.get("/", (req, res) => {
         }
 
         // Wheel animation for visual effect
-        function animateWheel() {
-            const wheel = document.getElementById('wheel');
-            wheel.classList.add('wheel-spinning');
-            
-            setTimeout(() => {
-                wheel.classList.remove('wheel-spinning');
-            }, 4000);
-        }
+// Wheel animation for visual effect
+function animateWheel() {
+    const wheel = document.getElementById('wheel');
+    wheel.classList.add('wheel-spinning');
+    
+    // Stop animation after 4 seconds
+    setTimeout(() => {
+        wheel.classList.remove('wheel-spinning');
+        // Reset transform to show the actual winner
+        wheel.style.transform = 'rotate(0deg)';
+    }, 4000);
+}
 
         // Update MEGA JACKPOT timer
         function updateMegaJackpot() {
@@ -963,6 +1004,7 @@ app.listen(PORT, async () => {
     // Refresh rewards transactions every 2 minutes
     setInterval(getRewardsTransactions, 120000);
 });
+
 
 
 
