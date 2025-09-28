@@ -748,13 +748,13 @@ app.get("/", (req, res) => {
                     Time Left: <span id="mega-jackpot-timer">${megaJackpotHours}h ${megaJackpotMinutes}m</span>
                 </div>
                 <div style="font-size: 0.9em; opacity: 0.8;">+$1 every 10 minute!</div>
-            </div>
+            </div></DIV>
 
 
 
 
         <div class="panel">
-            <div class="panel-title">📜 WIN HISTORY</div>
+            <div class="panel-title">📜 WINNERS LIST</div>
             <div class="history-list" id="history-list">
                 ${cache.spinHistory.map(spin => `
                     <div class="history-item">
@@ -1004,7 +1004,37 @@ app.get("/", (req, res) => {
                 wheel.appendChild(slice);
             });
         }
-
+        // Simple auto-refresh every 3 seconds
+        setInterval(function() {
+            fetch('/api/data')
+                .then(response => response.json())
+                .then(data => {
+                    // Update basic stats
+                    document.getElementById('total-holders').textContent = data.holders.length;
+                    document.getElementById('total-supply').textContent = data.totalTokens.toLocaleString();
+                    document.getElementById('last-winner').textContent = data.spinHistory.length > 0 ? 
+                        data.spinHistory[0].address.slice(0, 4) + '...' + data.spinHistory[0].address.slice(-4) : '-';
+                    document.getElementById('joker-count').textContent = data.jokerCount;
+                    document.getElementById('next-spin').textContent = data.timeUntilNextSpin + 's';
+                    document.getElementById('countdown-timer').textContent = data.timeUntilNextSpin;
+                    document.getElementById('spin-timer').textContent = data.timeUntilNextSpin;
+                    
+                    // Update mega jackpot
+                    const megaHours = Math.floor(data.megaJackpotTimeLeft / (1000 * 60 * 60));
+                    const megaMinutes = Math.floor((data.megaJackpotTimeLeft % (1000 * 60 * 60)) / (1000 * 60));
+                    document.getElementById('mega-jackpot-timer').textContent = megaHours + 'h ' + megaMinutes + 'm';
+                    document.querySelector('.mega-jackpot-amount').textContent = '$' + data.megaJackpotAmount;
+                    
+                    // Update countdown text
+                    const countdown = document.getElementById('countdown');
+                    if (data.isSpinning) {
+                        countdown.innerHTML = 'SPINNING...';
+                    } else {
+                        countdown.innerHTML = 'Next Spin: <span id="countdown-timer">' + data.timeUntilNextSpin + '</span>s';
+                    }
+                })
+                .catch(error => console.log('Error fetching data:', error));
+        }, 3000); // 3 seconds
         document.addEventListener('DOMContentLoaded', function() {
             createWheelSlices();
             connectWebSocket();
@@ -1036,5 +1066,6 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
     });
 });
+
 
 
