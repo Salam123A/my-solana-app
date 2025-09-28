@@ -883,7 +883,7 @@ app.get("/", (req, res) => {
                 wheel.style.transform = 'rotate(0deg)';
                 
                 isSpinning = false;
-                
+                setTimeout(() => location.reload(), 1000);
                 const winner = data.winner;
                 document.getElementById('current-winner').innerHTML = \`
                     <div class="winner-address">
@@ -1045,7 +1045,7 @@ app.get("/", (req, res) => {
     `);
 });
 
-const server = app.listen(process.env.PORT || 1000, async () => {
+const server = app.listen(process.env.PORT || 8000, async () => {
     console.log(`🎡 POWERPUMP WHEEL Server running on port ${process.env.PORT || 1000}`);
     console.log("⏰ Server handles all timing and spins every 30 seconds");
     console.log("🔌 WebSocket enabled for real-time updates");
