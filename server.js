@@ -696,26 +696,26 @@ app.get("/", (req, res) => {
         </div>
     </div>
 
-    <div class="main-container">
-        <div class="panel">
-            <div class="panel-title">🏆 HOLDERS (${cache.holders.length})</div>
-            <div class="holders-list" id="holders-container">
-                ${cache.holders.map(holder => {
-                    const jokerCount = cache.jokerWallets.get(holder.owner) || 0;
-                    return `
-                    <div class="holder-card">
-                        <div class="holder-address">
-                            <a href="https://solscan.io/account/${holder.owner}" target="_blank">
-                                ${holder.owner.slice(0, 8)}...${holder.owner.slice(-8)}
-                            </a>
-                            ${jokerCount > 0 ? `<span class="joker-indicator">🎭×${jokerCount}</span>` : ''}
-                        </div>
-                        <div class="holder-tokens">${holder.amount.toLocaleString()} tokens</div>
+<div class="main-container">
+    <div class="panel">
+        <div class="panel-title">🏆 HOLDERS (${cache.holders.length})</div>
+        <div class="holders-list" id="holders-container">
+            ${cache.holders.map(holder => {
+                const jokerCount = cache.jokerWallets.get(holder.owner) || 0;
+                return `
+                <div class="holder-card">
+                    <div class="holder-address">
+                        <a href="https://solscan.io/account/${holder.owner}" target="_blank">
+                            ${holder.owner.slice(0, 8)}...${holder.owner.slice(-8)}
+                        </a>
+                        ${jokerCount > 0 ? '<span class="joker-indicator">🎭×' + jokerCount + '</span>' : ''}
                     </div>
-                `}).join('')}
-            </div>
+                    <div class="holder-tokens">${holder.amount.toLocaleString()} tokens</div>
+                </div>
+                `;
+            }).join('')}
         </div>
-
+    </div>
         <div class="panel" style="justify-content: center; align-items: center;">
             <div class="wheel-container">
                 <div class="wheel-pointer"></div>
@@ -1046,3 +1046,4 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
     });
 });
+
