@@ -4,7 +4,7 @@ const express = require("express");
 // CONFIG
 const RPC_ENDPOINT = "https://mainnet.helius-rpc.com/?api-key=07ed88b0-3573-4c79-8d62-3a2cbd5c141a";
 const TOKEN_MINT = "8KK76tofUfbe7pTh1yRpbQpTkYwXKUjLzEBtAUTwpump";
-const SPIN_INTERVAL = 30 * 1000; // 30 seconds
+const SPIN_INTERVAL = 60 * 1000; // 30 seconds
 
 // In-memory cache (no JSON files)
 let cache = {
@@ -748,3 +748,4 @@ app.listen(PORT, async () => {
     // Refresh holders every minute
     setInterval(getHolders, 60000);
 });
+
