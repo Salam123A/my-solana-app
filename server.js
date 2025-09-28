@@ -1,706 +1,676 @@
-import express from "express";
-import bodyParser from "body-parser";
-import * as web3 from "@solana/web3.js";
-import fetch from "node-fetch";
+const { Connection, PublicKey } = require("@solana/web3.js");
+const express = require("express");
 
-const { Connection, PublicKey } = web3;
+// CONFIG
 const RPC_ENDPOINT = "https://mainnet.helius-rpc.com/?api-key=07ed88b0-3573-4c79-8d62-3a2cbd5c141a";
-const JUPITER_API_URL_V3 = "https://lite-api.jup.ag/price/v3?ids=";
-const JUPITER_API_URL_V2 = "https://lite-api.jup.ag/price/v2?ids=";
-const JUPITER_TOKENINFO_URL = "https://lite-api.jup.ag/tokens/v1/";
-const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const SOL_MINT = "So11111111111111111111111111111111111111112";
-const JUP_MINT = "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
-const JUPITER_BATCH_SIZE = 49; // Increased batch size for Jupiter API
-const MAX_TOP_HOLDERS = 20;
-const MAX_RETRIES = 2;
-const RETRY_BASE_DELAY = 1200;
-const TOKEN_META_CACHE_TTL_MIN = 180;
-const TOKEN_META_CACHE_TTL_MAX = 320;
-const SPL_SCAN_INTERVAL = 6000;
+const TOKEN_MINT = "8KK76tofUfbe7pTh1yRpbQpTkYwXKUjLzEBtAUTwpump";
+const SPIN_INTERVAL = 30 * 1000; // 30 seconds
 
-const connection = new Connection(RPC_ENDPOINT, "confirmed");
-const app = express();
-const PORT = process.env.PORT || 10000;
-
-app.use(bodyParser.json());
-app.use(express.static("public"));
-
-const storage = {
-  tokenMint: "",
-  registry: {},
-  initialTop50: null,
-  initialTop50Amounts: new Map(),
-  previousTop50: new Set(),
-  previousTop50MinAmount: 0,
-  allTimeNewTop50: new Set(),
-  scanning: false,
-  latestData: null,
-  pollInterval: null,
-  splHoldingsInterval: null,
-  startTime: null,
-  prices: {
-    SOL: 0,
-    JUP: 0,
-    lastUpdated: null
-  },
-  topHoldersCache: {},
-  walletTokenCache: {},
-  tokenMetaCache: {},
-  topHolderAddresses: [],
+// In-memory cache (no JSON files)
+let cache = {
+    holders: [],
+    spinHistory: [],
+    jokerWallets: new Map(), // wallet -> joker count
+    jokerBonusWinners: [], // wallets that reached 3 jokers
+    lastSpinTime: Date.now(),
+    nextSpinTime: Date.now() + SPIN_INTERVAL,
+    isSpinning: false
 };
 
-function getRandomTTL() {
-  return TOKEN_META_CACHE_TTL_MIN + Math.floor(Math.random() * (TOKEN_META_CACHE_TTL_MAX - TOKEN_META_CACHE_TTL_MIN));
-}
+let connection = new Connection(RPC_ENDPOINT);
+const app = express();
 
-async function fetchTokenMetasBatch(mints) {
-  const now = Date.now();
-  const mintsToFetch = [];
-  const results = {};
-  
-  // Check cache first
-  for (const mint of mints) {
-    const cached = storage.tokenMetaCache[mint];
-    if (cached && now - cached.updatedAt < cached.ttl * 1000) {
-      results[mint] = cached;
-    } else {
-      mintsToFetch.push(mint);
-    }
-  }
-  
-  // Fetch remaining mints in batches
-  if (mintsToFetch.length > 0) {
+app.use(express.static('public'));
+app.use(express.json());
+
+// Get token holders with 0.01% to 5% filter
+async function getHolders() {
     try {
-      const response = await fetch(JUPITER_TOKENINFO_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ mints: mintsToFetch })
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        
-        for (const mint of mintsToFetch) {
-          const tokenData = data[mint] || {};
-          const meta = { 
-            name: tokenData.name || "Unknown", 
-            symbol: tokenData.symbol || "", 
-            logoURI: tokenData.logoURI || null, 
-            updatedAt: now, 
-            ttl: getRandomTTL() 
-          };
-          
-          storage.tokenMetaCache[mint] = meta;
-          results[mint] = meta;
-        }
-      } else {
-        // If batch request fails, fall back to individual requests
-        for (const mint of mintsToFetch) {
-          try {
-            const resp = await fetch(JUPITER_TOKENINFO_URL + mint);
-            if (resp.ok) {
-              const data = await resp.json();
-              const meta = { 
-                name: data.name || "Unknown", 
-                symbol: data.symbol || "", 
-                logoURI: data.logoURI || null, 
-                updatedAt: now, 
-                ttl: getRandomTTL() 
-              };
-              storage.tokenMetaCache[mint] = meta;
-              results[mint] = meta;
-            } else {
-              // Create default entry if fetch fails
-              const meta = { name: "Unknown", symbol: "", logoURI: null, updatedAt: now, ttl: getRandomTTL() };
-              storage.tokenMetaCache[mint] = meta;
-              results[mint] = meta;
+        const accounts = await connection.getParsedProgramAccounts(
+            new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+            {
+                filters: [
+                    { dataSize: 165 },
+                    { memcmp: { offset: 0, bytes: TOKEN_MINT } },
+                ]
             }
-          } catch (err) {
-            const meta = { name: "Unknown", symbol: "", logoURI: null, updatedAt: now, ttl: getRandomTTL() };
-            storage.tokenMetaCache[mint] = meta;
-            results[mint] = meta;
-          }
-          await sleep(50); // Small delay between individual requests
-        }
-      }
-    } catch (err) {
-      // If batch request fails entirely, fall back to individual requests
-      for (const mint of mintsToFetch) {
-        try {
-          const resp = await fetch(JUPITER_TOKENINFO_URL + mint);
-          if (resp.ok) {
-            const data = await resp.json();
-            const meta = { 
-              name: data.name || "Unknown", 
-              symbol: data.symbol || "", 
-              logoURI: data.logoURI || null, 
-              updatedAt: now, 
-              ttl: getRandomTTL() 
-            };
-            storage.tokenMetaCache[mint] = meta;
-            results[mint] = meta;
-          } else {
-            // Create default entry if fetch fails
-            const meta = { name: "Unknown", symbol: "", logoURI: null, updatedAt: now, ttl: getRandomTTL() };
-            storage.tokenMetaCache[mint] = meta;
-            results[mint] = meta;
-          }
-        } catch (err) {
-          const meta = { name: "Unknown", symbol: "", logoURI: null, updatedAt: now, ttl: getRandomTTL() };
-          storage.tokenMetaCache[mint] = meta;
-          results[mint] = meta;
-        }
-        await sleep(50); // Small delay between individual requests
-      }
-    }
-  }
-  
-  return results;
-}
-
-function getSecondsSinceStart() {
-  if (!storage.startTime) return 0;
-  const now = new Date();
-  return Math.floor((now - storage.startTime) / 1000);
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function logError(...args) {
-  console.error("==> [ERROR]", ...args);
-}
-
-function logInfo(...args) {
-  console.log("==>", ...args);
-}
-
-async function fetchJupiterPricesBatched(mints, maxBatchSize = JUPITER_BATCH_SIZE) {
-  let prices = {};
-  
-  // Try V3 API first
-  for (let i = 0; i < mints.length; i += maxBatchSize) {
-    const batch = mints.slice(i, i + maxBatchSize);
-    let tries = 0;
-    let success = false;
-    
-    while (tries < MAX_RETRIES && !success) {
-      try {
-        const url = JUPITER_API_URL_V3 + batch.join(",");
-        const response = await fetch(url);
+        );
         
-        if (!response.ok) {
-          // If rate limited or error, try V2 API
-          if (response.status === 429) {
-            logInfo(`Rate limited on V3, trying V2 for batch`);
-            return await fetchJupiterPricesV2(mints, maxBatchSize);
-          }
-          
-          const body = await response.text();
-          logError(`Jupiter V3 API HTTP ${response.status} for batch:`, batch, "Body:", body);
-          break;
-        }
+        // First get all holders
+        const allHolders = accounts.map(acc => ({
+            address: acc.pubkey.toBase58(),
+            owner: acc.account.data.parsed.info.owner,
+            amount: Number(acc.account.data.parsed.info.tokenAmount.amount)
+        })).filter(h => h.amount > 0);
         
-        let priceData;
-        try {
-          priceData = await response.json();
-        } catch (err) {
-          logError(`Invalid JSON from Jupiter V3 for batch:`, batch, err.message);
-          break;
-        }
+        // Calculate total supply
+        const totalSupply = allHolders.reduce((sum, h) => sum + h.amount, 0);
         
-        // Process V3 response format
-        if (priceData.data) {
-          Object.keys(priceData.data).forEach(mint => {
-            prices[mint] = {
-              usdPrice: priceData.data[mint].price,
-              price: priceData.data[mint].price
-            };
-          });
-        }
+        // Filter holders with 0.01% to 5% of total supply
+        cache.holders = allHolders.filter(holder => {
+            const percentage = (holder.amount / totalSupply) * 100;
+            return percentage >= 0.01 && percentage <= 5;
+        });
         
-        success = true;
-      } catch (err) {
-        logError(`Jupiter V3 fetch error for batch:`, batch, err.message || err);
-        tries++;
-        await sleep(RETRY_BASE_DELAY * tries);
-      }
-    }
-    
-    await sleep(100);
-  }
-  
-  return prices;
-}
-
-async function fetchJupiterPricesV2(mints, maxBatchSize = JUPITER_BATCH_SIZE) {
-  let prices = {};
-  
-  for (let i = 0; i < mints.length; i += maxBatchSize) {
-    const batch = mints.slice(i, i + maxBatchSize);
-    let tries = 0;
-    let success = false;
-    
-    while (tries < MAX_RETRIES && !success) {
-      try {
-        const url = JUPITER_API_URL_V2 + batch.join(",");
-        const response = await fetch(url);
-        
-        if (!response.ok) {
-          const body = await response.text();
-          if (response.status === 429 || body.includes("Rate limit")) {
-            logError(`[JUPITER RATE LIMIT] HTTP 429 or rate-limit on batch:`, batch, `Skip updating SPL tokens for now`);
-            break;
-          }
-          logError(`Jupiter V2 API HTTP ${response.status} for batch:`, batch, "Body:", body);
-          break;
-        }
-        
-        let priceData;
-        try {
-          priceData = await response.json();
-        } catch (err) {
-          logError(`Invalid JSON from Jupiter V2 for batch:`, batch, err.message);
-          break;
-        }
-        
-        // Process V2 response format
-        if (priceData.data) {
-          Object.keys(priceData.data).forEach(mint => {
-            prices[mint] = {
-              usdPrice: priceData.data[mint].price,
-              price: priceData.data[mint].price
-            };
-          });
-        }
-        
-        success = true;
-      } catch (err) {
-        logError(`Jupiter V2 fetch error for batch:`, batch, err.message || err);
-        tries++;
-        await sleep(RETRY_BASE_DELAY * tries);
-      }
-    }
-    
-    await sleep(100);
-  }
-  
-  return prices;
-}
-
-async function fetchPrices() {
-  if (!storage.tokenMint) return;
-  try {
-    const MINTS = [
-      storage.tokenMint,
-      SOL_MINT,
-      JUP_MINT
-    ].filter(Boolean);
-    
-    const prices = await fetchJupiterPricesBatched(MINTS, JUPITER_BATCH_SIZE);
-    
-    Object.keys(prices).forEach(mint => {
-      storage.prices[mint] = parseFloat(prices[mint]?.usdPrice || 0);
-    });
-    
-    storage.prices.lastUpdated = new Date();
-  } catch (error) {
-    logError("fetchPrices:", error.message || error);
-  }
-}
-
-function calculateUSDValue(amount, tokenMint) {
-  const price = storage.prices[tokenMint];
-  if (price && amount) return amount * price;
-  return 0;
-}
-
-async function fetchAllTokenAccounts(mintAddress) {
-  const mintPublicKey = new PublicKey(mintAddress);
-  try {
-    const accounts = await connection.getParsedProgramAccounts(
-      new PublicKey(TOKEN_PROGRAM_ID),
-      {
-        filters: [
-          { dataSize: 165 },
-          { memcmp: { offset: 0, bytes: mintPublicKey.toBase58() } }
-        ]
-      }
-    );
-    
-    return accounts.map((acc) => {
-      const parsed = acc.account.data.parsed;
-      const amount = Number(parsed.info.tokenAmount.amount) / Math.pow(10, parsed.info.tokenAmount.decimals);
-      return {
-        address: acc.pubkey.toBase58(),
-        owner: parsed.info.owner,
-        amount: amount,
-        usdValue: calculateUSDValue(amount, mintAddress)
-      };
-    }).filter(a => a.amount > 0);
-  } catch (e) {
-    logError("fetchAllTokenAccounts:", e.message || e);
-    return [];
-  }
-}
-
-function makeStepBuckets() {
-  const buckets = {};
-  for (let pct = 10; pct <= 100; pct += 10) {
-    buckets[`bought${pct}`] = 0;
-    buckets[`sold${pct}`] = 0;
-  }
-  buckets.sold100 = 0;
-  buckets.unchanged = 0;
-  buckets.current = 0;
-  buckets.total = 0;
-  return buckets;
-}
-
-function analyze(registry, fresh) {
-  const now = Date.now();
-  const freshMap = new Map(fresh.map(h => [h.owner, h.amount]));
-  const changes = makeStepBuckets();
-  
-  for (const [owner, info] of Object.entries(registry)) {
-    const freshAmount = freshMap.get(owner);
-    if (freshAmount !== undefined) {
-      info.current = freshAmount;
-      info.lastSeen = now;
-      const changePct = ((freshAmount - info.baseline) / info.baseline) * 100;
-      let matched = false;
-      
-      if (Math.abs(changePct) < 10) changes.unchanged++;
-      else if (changePct > 0) {
-        for (let pct = 100; pct >= 10; pct -= 10) {
-          if (changePct >= pct) { changes[`bought${pct}`]++; matched = true; break; }
-        }
-        if (!matched) changes.unchanged++;
-      } else {
-        for (let pct = 100; pct >= 10; pct -= 10) {
-          if (changePct <= -pct) { changes[`sold${pct}`]++; matched = true; break; }
-        }
-        if (!matched) changes.unchanged++;
-      }
-      changes.current++;
-    } else {
-      if (info.baseline > 0 && info.current !== 0) info.current = 0;
-      if (info.baseline > 0 && info.current === 0) changes.sold100++;
-    }
-    changes.total++;
-  }
-  
-  for (const { owner, amount } of fresh) {
-    if (!registry[owner]) {
-      registry[owner] = { baseline: amount, current: amount, lastSeen: now };
-      changes.total++;
-      changes.current++;
-      changes.unchanged++;
-    }
-  }
-  
-  return changes;
-}
-
-async function analyzeTop50(fresh, initialTop50, initialTop50Amounts, previousTop50, previousTop50MinAmount) {
-  if (!initialTop50 || initialTop50.length === 0) return null;
-  
-  const sorted = fresh.slice().sort((a, b) => b.amount - a.amount);
-  const currentTop50 = sorted.slice(0, 50).map(h => h.owner);
-  const currentTop50Map = new Map(sorted.slice(0, 50).map(h => [h.owner, h.amount]));
-  const currentTop50MinAmount = sorted[49]?.amount || 0;
-  
-  const newSinceLastFetch = currentTop50.filter(owner =>
-    !previousTop50.has(owner) &&
-    (currentTop50Map.get(owner) > previousTop50MinAmount)
-  );
-  
-  const newSinceFirstFetch = currentTop50.filter(owner =>
-    storage.allTimeNewTop50.has(owner)
-  ).length;
-  
-  newSinceLastFetch.forEach(owner => {
-    storage.allTimeNewTop50.add(owner);
-  });
-  
-  const stillInTop50 = initialTop50.filter(owner => currentTop50.includes(owner));
-  const goneFromInitialTop50 = initialTop50.filter(owner => !currentTop50.includes(owner));
-  const newInTop50 = currentTop50.filter(owner => !initialTop50.includes(owner));
-  
-  const top50Sales = { sold100: 0, sold50: 0, sold25: 0, };
-  const top50Buys = { bought100: 0, bought50: 0, bought25: 0, bought10: 0, };
-  
-  for (const owner of initialTop50) {
-    const initialAmount = initialTop50Amounts.get(owner);
-    const currentAmount = currentTop50Map.get(owner) || 0;
-    
-    if (currentAmount === 0) {
-      top50Sales.sold100++;
-    } else {
-      const changePct = ((currentAmount - initialAmount) / initialAmount) * 100;
-      if (changePct <= -50) {
-        top50Sales.sold50++;
-      } else if (changePct <= -25) {
-        top50Sales.sold25++;
-      } else if (changePct >= 100) {
-        top50Buys.bought100++;
-      } else if (changePct >= 50) {
-        top50Buys.bought50++;
-      } else if (changePct >= 25) {
-        top50Buys.bought25++;
-      } else if (changePct >= 10) {
-        top50Buys.bought10++;
-      }
-    }
-  }
-  
-  storage.previousTop50 = new Set(currentTop50);
-  storage.previousTop50MinAmount = currentTop50MinAmount;
-  
-  return {
-    currentTop50Count: currentTop50.length,
-    stillInTop50Count: stillInTop50.length,
-    goneFromInitialTop50Count: goneFromInitialTop50.length,
-    newInTop50Count: newInTop50.length,
-    completelyNewSinceLastFetch: newSinceLastFetch.length,
-    completelyNewSinceFirstFetch: newSinceFirstFetch,
-    top50Sales,
-    top50Buys,
-  };
-}
-
-async function fetchHolderValuableTokens(owner) {
-  const now = Date.now();
-  if (!storage.walletTokenCache[owner]) storage.walletTokenCache[owner] = {};
-  const cache = storage.walletTokenCache[owner];
-  const validTokens = [];
-  
-  for (const [mint, entry] of Object.entries(cache)) {
-    if (now - entry.updatedAt < entry.ttl * 1000) {
-      validTokens.push(...entry.valuableTokens);
-    }
-  }
-  
-  return validTokens.sort((a, b) => b.usdValue - a.usdValue);
-}
-
-async function updateAllHoldersValuableTokens(owners) {
-  if (!owners || owners.length === 0) return;
-  
-  // Get all tokens from all holders
-  const allTokens = [];
-  const ownerTokenMap = new Map();
-  
-  for (const owner of owners) {
-    try {
-      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-        new PublicKey(owner),
-        { programId: new PublicKey(TOKEN_PROGRAM_ID) }
-      );
-      
-      const tokens = tokenAccounts.value.map(acc => {
-        const parsed = acc.account.data.parsed;
-        const info = parsed.info;
-        const mint = info.mint;
-        const decimals = info.tokenAmount.decimals;
-        const amount = Number(info.tokenAmount.amount) / Math.pow(10, decimals);
-        return { owner, mint, amount };
-      }).filter(t => t.amount > 0);
-      
-      allTokens.push(...tokens);
-      
-      // Initialize owner token map
-      if (!ownerTokenMap.has(owner)) {
-        ownerTokenMap.set(owner, []);
-      }
-      ownerTokenMap.get(owner).push(...tokens);
+        console.log(`Updated ${cache.holders.length} eligible holders (0.01% - 5% range)`);
     } catch (e) {
-      logError(`Error fetching tokens for owner ${owner}:`, e.message);
+        console.error("Error:", e.message);
     }
-    
-    // Add a small delay to avoid rate limiting
-    await sleep(50);
-  }
-  
-  // Get all unique mints
-  const uniqueMints = [...new Set(allTokens.map(t => t.mint))];
-  
-  // Batch fetch prices and metadata
-  let prices = {};
-  let tokenMetas = {};
-  
-  if (uniqueMints.length > 0) {
-    prices = await fetchJupiterPricesBatched(uniqueMints, JUPITER_BATCH_SIZE);
-    tokenMetas = await fetchTokenMetasBatch(uniqueMints);
-  }
-  
-  const now = Date.now();
-  
-  // Update cache for each owner
-  for (const [owner, tokens] of ownerTokenMap.entries()) {
-    if (!storage.walletTokenCache[owner]) storage.walletTokenCache[owner] = {};
-    const cache = storage.walletTokenCache[owner];
-    
-    for (const token of tokens) {
-      const price = prices[token.mint]?.usdPrice;
-      if (!price) continue;
-      
-      const meta = tokenMetas[token.mint] || { name: "Unknown", symbol: "", logoURI: null };
-      const usdValue = token.amount * price;
-      
-      if (usdValue > 500) {
-        cache[token.mint] = {
-          valuableTokens: [{
-            name: meta.name,
-            symbol: meta.symbol,
-            logoURI: meta.logoURI,
-            usdValue,
-          }],
-          updatedAt: now,
-          ttl: getRandomTTL()
-        };
-      }
-    }
-  }
 }
 
-async function pollData() {
-  if (!storage.tokenMint || !storage.scanning) return;
-  
-  try {
-    const fresh = await fetchAllTokenAccounts(storage.tokenMint);
+// Spin the wheel with COMPLETELY RANDOM selection and JOKER RESPIN
+function spinWheel() {
+    if (cache.holders.length === 0) return null;
     
-    if (!storage.initialTop50) {
-      const sorted = fresh.slice().sort((a, b) => b.amount - a.amount);
-      storage.initialTop50 = sorted.slice(0, 50).map(h => h.owner);
-      sorted.slice(0, 50).forEach(h => storage.initialTop50Amounts.set(h.owner, h.amount));
-      storage.previousTop50 = new Set(storage.initialTop50);
-      storage.previousTop50MinAmount = sorted[49]?.amount || 0;
+    // COMPLETELY RANDOM SELECTION - not weighted by token amount
+    const randomIndex = Math.floor(Math.random() * cache.holders.length);
+    const winnerHolder = cache.holders[randomIndex];
+    
+    if (!winnerHolder) return null;
+    
+    // EVERY WINNER GETS A JOKER
+    const getsJoker = true;
+    let jokerCount = cache.jokerWallets.get(winnerHolder.owner) || 0;
+    jokerCount++;
+    cache.jokerWallets.set(winnerHolder.owner, jokerCount);
+    
+    console.log(`🎭 JOKER ASSIGNED to ${winnerHolder.owner.slice(0, 8)}... Total: ${jokerCount}`);
+    
+    // Check if this wallet reached 3 jokers
+    let isNewBonusWinner = false;
+    if (jokerCount === 3) {
+        if (!cache.jokerBonusWinners.includes(winnerHolder.owner)) {
+            cache.jokerBonusWinners.push(winnerHolder.owner);
+            isNewBonusWinner = true;
+            console.log(`🎉🎉🎉 JOKER BONUS TRIGGERED for ${winnerHolder.owner.slice(0, 8)}... 🎉🎉🎉`);
+        }
     }
     
-    const changes = analyze(storage.registry, fresh);
-    const top50Stats = await analyzeTop50(
-      fresh,
-      storage.initialTop50,
-      storage.initialTop50Amounts,
-      storage.previousTop50,
-      storage.previousTop50MinAmount
-    );
-    
-    const topHoldersRaw = [...fresh].sort((a, b) => b.amount - a.amount).slice(0, MAX_TOP_HOLDERS);
-    storage.topHolderAddresses = topHoldersRaw.map(h => h.owner);
-    
-    const nowCache = {};
-    const topHolders = [];
-    
-    for (const holder of topHoldersRaw) {
-      let cached = storage.topHoldersCache[holder.owner];
-      let valuableTokens;
-      
-      if (cached && cached.amount === holder.amount) {
-        valuableTokens = cached.valuableTokens;
-      } else {
-        valuableTokens = await fetchHolderValuableTokens(holder.owner);
-      }
-      
-      const holderData = { ...holder, valuableTokens };
-      topHolders.push(holderData);
-      nowCache[holder.owner] = holderData;
-    }
-    
-    storage.topHoldersCache = nowCache;
-    
-    storage.latestData = {
-      fresh,
-      registry: storage.registry,
-      changes,
-      top50Stats,
-      top50Count: storage.initialTop50.length,
-      timeRunning: getSecondsSinceStart(),
-      startTime: storage.startTime,
-      prices: storage.prices,
-      tokenMint: storage.tokenMint,
-      topHolders
+    const winner = {
+        address: winnerHolder.owner,
+        tokens: winnerHolder.amount,
+        time: new Date().toLocaleString(),
+        percentage: (winnerHolder.amount / cache.holders.reduce((sum, h) => sum + h.amount, 0) * 100).toFixed(4),
+        gotJoker: getsJoker,
+        jokerCount: jokerCount,
+        isJokerBonus: jokerCount === 3,
+        isNewBonusWinner: isNewBonusWinner
     };
-  } catch (error) {
-    logError("pollData error:", error.message || error);
-  }
+    
+    cache.spinHistory.unshift(winner);
+    if (cache.spinHistory.length > 50) cache.spinHistory.pop();
+    
+    // Update spin timing
+    cache.lastSpinTime = Date.now();
+    cache.nextSpinTime = cache.lastSpinTime + SPIN_INTERVAL;
+    
+    console.log(`🎉 WINNER: ${winner.address.slice(0, 8)}... | Joker: ${getsJoker} | Total Jokers: ${jokerCount}`);
+    return winner;
 }
 
-async function pollTopHolderSplTokens() {
-  if (!storage.tokenMint || !storage.scanning || !storage.topHolderAddresses.length) return;
-  
-  // Batch update all holders' tokens at once
-  await updateAllHoldersValuableTokens(storage.topHolderAddresses);
+// Auto-spin function (called by server interval)
+function autoSpin() {
+    if (!cache.isSpinning && cache.holders.length > 0) {
+        cache.isSpinning = true;
+        console.log('🔄 SERVER: Auto-spin triggered');
+        spinWheel();
+        cache.isSpinning = false;
+    }
 }
 
-app.post("/api/start", async (req, res) => {
-  const { mint } = req.body;
-  if (!mint) return res.status(400).send("Missing token mint");
-  
-  storage.tokenMint = mint;
-  storage.registry = {};
-  storage.initialTop50 = null;
-  storage.initialTop50Amounts = new Map();
-  storage.previousTop50 = new Set();
-  storage.previousTop50MinAmount = 0;
-  storage.allTimeNewTop50 = new Set();
-  storage.scanning = true;
-  storage.startTime = new Date();
-  storage.topHoldersCache = {};
-  storage.topHolderAddresses = [];
-  
-  if (storage.pollInterval) clearInterval(storage.pollInterval);
-  if (storage.splHoldingsInterval) clearInterval(storage.splHoldingsInterval);
-  
-  await fetchPrices();
-  storage.pollInterval = setInterval(pollData, 1000);
-  setInterval(fetchPrices, 30000);
-  pollData();
-  
-  storage.splHoldingsInterval = setInterval(pollTopHolderSplTokens, SPL_SCAN_INTERVAL);
-  
-  res.send("Scan started - polling every 1 second");
-});
-
-app.post("/api/stop", (req, res) => {
-  storage.scanning = false;
-  
-  if (storage.pollInterval) {
-    clearInterval(storage.pollInterval);
-    storage.pollInterval = null;
-  }
-  
-  if (storage.splHoldingsInterval) {
-    clearInterval(storage.splHoldingsInterval);
-    storage.splHoldingsInterval = null;
-  }
-  
-  res.send("Scan stopped");
-});
-
-app.get("/api/status", (req, res) => {
-  if (!storage.latestData) {
-    return res.json({
-      message: "No data yet",
-      prices: storage.prices,
-      tokenMint: storage.tokenMint
+// Serve HTML
+app.get("/", (req, res) => {
+    const jokerBonusList = cache.jokerBonusWinners.map(wallet => {
+        const jokerCount = cache.jokerWallets.get(wallet) || 0;
+        return { wallet, jokerCount };
     });
-  }
-  
-  storage.latestData.tokenMint = storage.tokenMint;
-  storage.latestData.currentTokenPrice = storage.prices[storage.tokenMint] || 0;
-  storage.latestData.solPrice = storage.prices[SOL_MINT] || 0;
-  storage.latestData.jupPrice = storage.prices[JUP_MINT] || 0;
-  
-  res.json(storage.latestData);
+
+    const timeUntilNextSpin = Math.max(0, Math.floor((cache.nextSpinTime - Date.now()) / 1000));
+    
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>POWERBALL WHEEL OF HOLDERS</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Arial Black', Arial, sans-serif; 
+            background: linear-gradient(135deg, #0a0a2a, #1a1a4a);
+            color: white;
+            min-height: 100vh;
+
+        }
+        .powerball-header {
+            text-align: center;
+            padding: 10px;
+            background: linear-gradient(45deg, #ff0000, #ff6b00);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            font-size: 2.5em;
+            text-shadow: 0 0 30px rgba(255, 107, 0, 0.5);
+            margin-bottom: 10px;
+        }
+        .main-container {
+            display: grid;
+            grid-template-columns: 1fr 500px 1fr;
+            gap: 15px;
+            height: calc(100vh - 120px);
+            padding: 0 15px;
+        }
+        .panel {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+            padding: 15px;
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .panel-title {
+            color: #ffd700;
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            border-bottom: 2px solid rgba(255, 215, 0, 0.3);
+            padding-bottom: 8px;
+        }
+        
+        /* WHEEL STYLES */
+        .wheel-container {
+            position: relative;
+            width: 400px;
+            height: 400px;
+            margin: 0 auto;
+        }
+        .wheel {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #ff0000, #ff6b00, #ffd700, #00ff88, #0066ff);
+            position: relative;
+            overflow: hidden;
+            border: 8px solid #ffd700;
+            box-shadow: 0 0 30px rgba(255, 215, 0, 0.5);
+        }
+        .wheel-spinning {
+            animation: spin 0.1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .wheel-slice {
+            position: absolute;
+            width: 50%;
+            height: 50%;
+            transform-origin: 100% 100%;
+            left: 0;
+            top: 0;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            padding-left: 40px;
+            font-size: 10px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+            overflow: hidden;
+        }
+        .wheel-slice:nth-child(odd) {
+            background: rgba(255, 0, 0, 0.6);
+        }
+        .wheel-slice:nth-child(even) {
+            background: rgba(255, 107, 0, 0.6);
+        }
+        .wheel-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 60px;
+            height: 60px;
+            background: radial-gradient(circle, #ff0000, #8b0000);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 20px rgba(255, 0, 0, 0.8);
+            z-index: 10;
+            border: 4px solid #ffd700;
+        }
+        .wheel-pointer {
+            position: absolute;
+            top: -30px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 20px solid transparent;
+            border-right: 20px solid transparent;
+            border-top: 40px solid #ffd700;
+            filter: drop-shadow(0 0 10px gold);
+            z-index: 100;
+        }
+        .current-winner {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+            z-index: 50;
+            border: 2px solid #ffd700;
+            min-width: 150px;
+            font-size: 0.9em;
+        }
+        .winner-address {
+            font-family: monospace;
+            color: #ffd700;
+            margin-bottom: 5px;
+            word-break: break-all;
+        }
+        .winner-stats {
+            font-size: 0.8em;
+            color: #00ff88;
+        }
+        .joker-indicator {
+            color: #ff00ff;
+            font-weight: bold;
+            text-shadow: 0 0 10px #ff00ff;
+        }
+        
+        /* HOLDERS LIST */
+        .holders-list {
+            flex: 1;
+            overflow-y: auto;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            padding-right: 5px;
+        }
+        .holder-card {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 10px;
+            border-radius: 8px;
+            border-left: 3px solid #ff6b00;
+            font-size: 0.85em;
+        }
+        .holder-address {
+            font-family: monospace;
+            margin-bottom: 3px;
+        }
+        .holder-tokens {
+            color: #ffd700;
+            font-size: 0.8em;
+        }
+        
+        /* HISTORY LIST */
+        .history-list {
+            flex: 1;
+            overflow-y: auto;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            padding-right: 5px;
+        }
+        .history-item {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 10px;
+            border-radius: 8px;
+            border-left: 3px solid #ff0000;
+            font-size: 0.8em;
+            position: relative;
+        }
+        .joker-badge {
+            background: #ff00ff;
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7em;
+            margin-right: 5px;
+            box-shadow: 0 0 10px #ff00ff;
+        }
+        .joker-bonus-badge {
+            background: linear-gradient(45deg, #ff00ff, #00ffff);
+            color: white;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8em;
+            margin-right: 5px;
+            box-shadow: 0 0 15px #ff00ff;
+            animation: glow 1s infinite alternate;
+        }
+        @keyframes glow {
+            from { box-shadow: 0 0 10px #ff00ff; }
+            to { box-shadow: 0 0 20px #00ffff, 0 0 30px #ff00ff; }
+        }
+        
+        /* JOKER BONUS SECTION */
+        .joker-bonus-section {
+            background: rgba(255, 0, 255, 0.1);
+            border: 2px solid #ff00ff;
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 10px;
+        }
+        .joker-bonus-title {
+            color: #ff00ff;
+            text-align: center;
+            font-size: 1.1em;
+            margin-bottom: 8px;
+            text-shadow: 0 0 10px #ff00ff;
+        }
+        .joker-bonus-item {
+            background: rgba(255, 0, 255, 0.2);
+            padding: 8px;
+            border-radius: 6px;
+            margin: 5px 0;
+            font-size: 0.8em;
+            border-left: 3px solid #00ffff;
+        }
+        
+        /* CONTROLS */
+        .controls {
+            text-align: center;
+            margin: 10px 0;
+        }
+        .countdown {
+            font-size: 1.2em;
+            text-align: center;
+            color: #ffd700;
+            margin: 10px 0;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+        
+        /* STATS BAR */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 10px;
+            padding: 0 15px 10px 15px;
+        }
+        .stat-card {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .stat-number {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #ffd700;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+        .stat-label {
+            font-size: 0.8em;
+            color: #ccc;
+            margin-top: 3px;
+        }
+        .joker-stat {
+            color: #ff00ff;
+            text-shadow: 0 0 10px rgba(255, 0, 255, 0.5);
+        }
+        
+        /* JOKER WALLETS ROW */
+        .joker-wallets-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 10px;
+            max-height: 80px;
+            overflow-y: auto;
+        }
+        .joker-wallet-item {
+            background: rgba(255, 0, 255, 0.2);
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            border: 1px solid #ff00ff;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .joker-wallet-jokers {
+            background: #ff00ff;
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7em;
+            font-weight: bold;
+        }
+        
+        /* LINKS */
+        a {
+            color: #00ff88;
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        a:hover {
+            color: #ffd700;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+        
+        /* SCROLLBARS */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 215, 0, 0.5);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 215, 0, 0.7);
+        }
+    </style>
+</head>
+<body>
+    <h1 class="powerball-header">🎡 POWERBALL WHEEL 🎡</h1>
+    
+    <div class="stats-bar">
+        <div class="stat-card">
+            <div class="stat-number" id="total-holders">${cache.holders.length}</div>
+            <div class="stat-label">TOTAL HOLDERS</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="total-supply">${cache.holders.reduce((sum, h) => sum + h.amount, 0).toLocaleString()}</div>
+            <div class="stat-label">TOTAL TOKENS</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="last-winner">${cache.spinHistory.length > 0 ? cache.spinHistory[0].address.slice(0, 4) + '...' + cache.spinHistory[0].address.slice(-4) : '-'}</div>
+            <div class="stat-label">LAST WINNER</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number joker-stat" id="joker-count">${cache.jokerWallets.size}</div>
+            <div class="stat-label">JOKER WALLETS</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="next-spin">${timeUntilNextSpin}s</div>
+            <div class="stat-label">NEXT SPIN</div>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- LEFT PANEL - HOLDERS -->
+        <div class="panel">
+            <div class="panel-title">🏆 HOLDERS (${cache.holders.length})</div>
+            <div class="holders-list" id="holders-container">
+                ${cache.holders.map(holder => {
+                    const jokerCount = cache.jokerWallets.get(holder.owner) || 0;
+                    return `
+                    <div class="holder-card">
+                        <div class="holder-address">
+                            <a href="https://solscan.io/account/${holder.owner}" target="_blank">
+                                ${holder.owner.slice(0, 8)}...${holder.owner.slice(-8)}
+                            </a>
+                            ${jokerCount > 0 ? `<span class="joker-indicator">🎭×${jokerCount}</span>` : ''}
+                        </div>
+                        <div class="holder-tokens">${holder.amount.toLocaleString()} tokens</div>
+                    </div>
+                `}).join('')}
+            </div>
+        </div>
+
+        <!-- CENTER PANEL - WHEEL -->
+        <div class="panel" style="justify-content: center; align-items: center;">
+            <div class="wheel-container">
+                <div class="wheel-pointer"></div>
+                <div class="wheel" id="wheel">
+                    <div class="current-winner" id="current-winner">
+                        ${cache.spinHistory.length > 0 ? `
+                            <div class="winner-address">
+                                ${cache.spinHistory[0].address.slice(0, 6)}...${cache.spinHistory[0].address.slice(-4)}
+                            </div>
+                            <div class="winner-stats">
+                                ${cache.spinHistory[0].tokens.toLocaleString()} tokens<br>
+                                ${cache.spinHistory[0].percentage}%
+                            </div>
+                            ${cache.spinHistory[0].gotJoker ? `<div class="joker-indicator" style="margin-top: 5px;">🎭 ${cache.spinHistory[0].jokerCount}/3</div>` : ''}
+                        ` : `
+                            <div>Next spin in <span id="spin-timer">${timeUntilNextSpin}</span>s</div>
+                        `}
+                    </div>
+                    <div class="wheel-center"></div>
+                </div>
+            </div>
+            
+            <div class="countdown" id="countdown">
+                ${cache.isSpinning ? 'SPINNING...' : `Next Spin: <span id="countdown-timer">${timeUntilNextSpin}</span>s`}
+            </div>
+
+            <!-- JOKER WALLETS ROW -->
+            <div class="joker-wallets-row" id="joker-wallets-container">
+                ${Array.from(cache.jokerWallets.entries()).map(([wallet, count]) => `
+                    <div class="joker-wallet-item">
+                        <a href="https://solscan.io/account/${wallet}" target="_blank">
+                            ${wallet.slice(0, 6)}...${wallet.slice(-4)}
+                        </a>
+                        <div class="joker-wallet-jokers">${count}</div>
+                    </div>
+                `).join('')}
+            </div>
+
+            <!-- JOKER BONUS SECTION -->
+            ${cache.jokerBonusWinners.length > 0 ? `
+            <div class="joker-bonus-section">
+                <div class="joker-bonus-title">🎉 JOKER BONUS WINNERS 🎉</div>
+                ${cache.jokerBonusWinners.map(wallet => {
+                    const jokerCount = cache.jokerWallets.get(wallet) || 0;
+                    return `
+                    <div class="joker-bonus-item">
+                        <span class="joker-bonus-badge">3</span>
+                        <a href="https://solscan.io/account/${wallet}" target="_blank">
+                            ${wallet.slice(0, 8)}...${wallet.slice(-8)}
+                        </a>
+                        <span style="margin-left: 5px; color: #ff00ff;">(${jokerCount} jokers)</span>
+                    </div>
+                `}).join('')}
+            </div>
+            ` : ''}
+        </div>
+
+        <!-- RIGHT PANEL - HISTORY -->
+        <div class="panel">
+            <div class="panel-title">📜 SPIN HISTORY</div>
+            <div class="history-list" id="history-list">
+                ${cache.spinHistory.map(spin => `
+                    <div class="history-item">
+                        ${spin.gotJoker ? 
+                            (spin.isJokerBonus ? 
+                                '<span class="joker-bonus-badge">3</span>' : 
+                                '<span class="joker-badge">🎭</span>'
+                            ) : ''
+                        }
+                        <strong>${spin.time.split(' ')[1]}</strong><br>
+                        <a href="https://solscan.io/account/${spin.address}" target="_blank">
+                            ${spin.address.slice(0, 8)}...${spin.address.slice(-8)}
+                        </a><br>
+       ${spin.tokens.toLocaleString()} tokens
+                        ${spin.gotJoker ? `<br><small class="joker-indicator">+1 Joker (${spin.jokerCount}/3)</small>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Simple auto-refresh to get latest data from server
+        setInterval(() => {
+            location.reload();
+        }, 5000); // Refresh every 5 seconds to get latest data
+        
+        // Update countdown display
+        function updateCountdown() {
+            const timeLeft = ${timeUntilNextSpin};
+            if (timeLeft > 0) {
+                document.getElementById('countdown-timer').textContent = timeLeft;
+                document.getElementById('spin-timer').textContent = timeLeft;
+                document.getElementById('next-spin').textContent = timeLeft + 's';
+            }
+        }
+        
+        // Initial update
+        updateCountdown();
+    </script>
+</body>
+</html>
+    `);
 });
 
-app.listen(PORT, () => {
-  logInfo(`Server running on port ${PORT}`);
+// API to get current data
+app.get("/api/data", (req, res) => {
+    const timeUntilNextSpin = Math.max(0, Math.floor((cache.nextSpinTime - Date.now()) / 1000));
+    
+    res.json({
+        holders: cache.holders,
+        totalTokens: cache.holders.reduce((sum, h) => sum + h.amount, 0),
+        spinHistory: cache.spinHistory,
+        jokerWallets: Object.fromEntries(cache.jokerWallets),
+        jokerBonusWinners: cache.jokerBonusWinners,
+        timeUntilNextSpin: timeUntilNextSpin,
+        isSpinning: cache.isSpinning,
+        lastWinner: cache.spinHistory.length > 0 ? cache.spinHistory[0] : null
+    });
 });
 
+// Start server
+const PORT = process.env.PORT || 1000;
+app.listen(PORT, async () => {
+    console.log(`🎡 POWERBALL WHEEL Server running on port ${PORT}`);
+    console.log("⏰ Server handles all timing and spins every 30 seconds");
+    console.log("🎲 COMPLETELY RANDOM selection (0.01% - 5% holders only)");
+    console.log("🎭 Joker system: EVERY WINNER gets 1 joker, 3 jokers = bonus!");
+    console.log("🔄 Client auto-refreshes every 5 seconds");
+    console.log("💾 Using in-memory cache (no JSON files)");
+    
+    await getHolders();
+    
+    // Server handles all timing and spins
+    setInterval(() => {
+        autoSpin();
+    }, SPIN_INTERVAL);
+    
+    // Refresh holders every minute
+    setInterval(getHolders, 60000);
+});
