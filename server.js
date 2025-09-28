@@ -125,8 +125,8 @@ async function getRewardsTransactions() {
 function calculateMegaJackpot() {
     const now = Date.now();
     const timePassed = now - cache.megaJackpotStart;
-    const minutesPassed = Math.floor(timePassed / (600 * 1000));
-    cache.megaJackpotAmount = minutesPassed;
+    const hoursPassed = Math.floor(timePassed / (60 * 60 * 1000)); // Change from minutes to hours
+    cache.megaJackpotAmount = hoursPassed * 10; // $10 per hour instead of $1 per 10 minutes
     return cache.megaJackpotAmount;
 }
 
@@ -747,7 +747,7 @@ app.get("/", (req, res) => {
                 <div class="mega-jackpot-timer">
                     Time Left: <span id="mega-jackpot-timer">${megaJackpotHours}h ${megaJackpotMinutes}m</span>
                 </div>
-                <div style="font-size: 0.9em; opacity: 0.8;">+$1 every 10 minute!</div>
+<div style="font-size: 0.9em; opacity: 0.8;">+$10 every hour!</div>
             </div></DIV>
 
 
@@ -1066,6 +1066,7 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
     });
 });
+
 
 
 
