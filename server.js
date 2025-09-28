@@ -747,21 +747,11 @@ app.get("/", (req, res) => {
                 <div class="mega-jackpot-timer">
                     Time Left: <span id="mega-jackpot-timer">${megaJackpotHours}h ${megaJackpotMinutes}m</span>
                 </div>
-                <div style="font-size: 0.9em; opacity: 0.8;">+$1 every minute!</div>
+                <div style="font-size: 0.9em; opacity: 0.8;">+$1 every 10 minute!</div>
             </div>
 
-            <div class="joker-wallets-row" id="joker-wallets-container">
 
-            </div>
 
-            ${cache.jokerBonusWinners.length > 0 ? `
-            <div class="joker-bonus-section">
-
-                    </div>
-                `}).join('')}
-            </div>
-            ` : ''}
-        </div>
 
         <div class="panel">
             <div class="panel-title">📜 WIN HISTORY</div>
@@ -1046,4 +1036,5 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
     });
 });
+
 
