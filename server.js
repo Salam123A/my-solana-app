@@ -25,7 +25,78 @@ let cache = {
 let connection = new Connection(RPC_ENDPOINT);
 const app = express();
 const wss = new WebSocket.Server({ noServer: true });
+// Log cache data in copy-paste format every 30 seconds
+function logCacheData() {
+    console.log('\n=== 🎯 COPY THIS DATA IF YOU NEED TO RESTORE LATER ===');
+    
+    const copyData = {
+        spinHistory: cache.spinHistory,
+        jokerWallets: Array.from(cache.jokerWallets.entries()),
+        jokerBonusWinners: cache.jokerBonusWinners,
+        megaJackpotStart: cache.megaJackpotStart,
+        megaJackpotAmount: cache.megaJackpotAmount,
+        lastSpinTime: cache.lastSpinTime,
+        nextSpinTime: cache.nextSpinTime
+    };
+    
+    console.log('📋 COPY FROM HERE:');
+    console.log(JSON.stringify(copyData, null, 2));
+    console.log('=== END COPY DATA ===\n');
+}
+// Function to initialize cache with data from console logs
+function initializeCacheWithData(consoleLogData) {
+    try {
+        console.log('🔄 Initializing cache with provided data...');
+        
+        // If you have the exact JSON from console logs
+        if (typeof consoleLogData === 'string') {
+            const parsedData = JSON.parse(consoleLogData);
+            restoreCacheFromData(parsedData);
+        } 
+        // If you're pasting the object directly
+        else if (typeof consoleLogData === 'object') {
+            restoreCacheFromData(consoleLogData);
+        }
+        
+        console.log('✅ Cache initialized with provided data!');
+        
+    } catch (error) {
+        console.error('❌ Error initializing cache:', error.message);
+        console.log('💡 Make sure you copy the exact JSON from console logs');
+    }
+}
 
+function restoreCacheFromData(data) {
+    if (data.spinHistory) {
+        cache.spinHistory = data.spinHistory;
+        console.log(`✅ Loaded ${data.spinHistory.length} spin history entries`);
+    }
+    
+    if (data.jokerWallets) {
+        cache.jokerWallets = new Map(data.jokerWallets);
+        console.log(`✅ Loaded ${data.jokerWallets.length} joker wallet entries`);
+    }
+    
+    if (data.jokerBonusWinners) {
+        cache.jokerBonusWinners = data.jokerBonusWinners;
+        console.log(`✅ Loaded ${data.jokerBonusWinners.length} joker bonus winners`);
+    }
+    
+    if (data.megaJackpotStart) {
+        cache.megaJackpotStart = data.megaJackpotStart;
+        cache.megaJackpotAmount = data.megaJackpotAmount || 0;
+        console.log(`✅ Loaded mega jackpot data`);
+    }
+    
+    if (data.lastSpinTime) {
+        cache.lastSpinTime = data.lastSpinTime;
+        cache.nextSpinTime = data.nextSpinTime || (Date.now() + SPIN_INTERVAL);
+        console.log(`✅ Loaded timer data`);
+    }
+}
+// Start logging
+setInterval(logCacheData, 30000);
+setTimeout(logCacheData, 5000);
 app.use(express.static('public'));
 app.use(express.json());
 // Enhanced logging function - copy friendly format
@@ -1211,6 +1282,7 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
     });
 });
+
 
 
 
