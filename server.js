@@ -197,10 +197,16 @@ function autoSpin() {
                         type: 'SPIN_RESULT',
                         data: { 
                             winner: winner,
-                            spinHistory: cache.spinHistory.slice(0, 10),
+                            spinHistory: cache.spinHistory,
                             jokerWallets: Array.from(cache.jokerWallets.entries()),
                             jokerBonusWinners: cache.jokerBonusWinners,
-                            nextSpinTime: cache.nextSpinTime
+                            nextSpinTime: cache.nextSpinTime,
+                            timeUntilNextSpin: Math.max(0, Math.floor((cache.nextSpinTime - Date.now()) / 1000)),
+                            megaJackpotAmount: calculateMegaJackpot(),
+                            megaJackpotTimeLeft: getMegaJackpotTime(),
+                            totalHolders: cache.holders.length,
+                            totalTokens: cache.holders.reduce((sum, h) => sum + h.amount, 0),
+                            jokerCount: cache.jokerWallets.size
                         }
                     }));
                 }, 4000);
@@ -225,9 +231,13 @@ wss.on('connection', function connection(ws) {
             jokerBonusWinners: cache.jokerBonusWinners,
             rewardsTransactions: cache.rewardsTransactions,
             nextSpinTime: cache.nextSpinTime,
+            timeUntilNextSpin: Math.max(0, Math.floor((cache.nextSpinTime - Date.now()) / 1000)),
             isSpinning: cache.isSpinning,
             megaJackpotAmount: calculateMegaJackpot(),
-            megaJackpotTimeLeft: getMegaJackpotTime()
+            megaJackpotTimeLeft: getMegaJackpotTime(),
+            totalHolders: cache.holders.length,
+            totalTokens: cache.holders.reduce((sum, h) => sum + h.amount, 0),
+            jokerCount: cache.jokerWallets.size
         }
     }));
 
@@ -263,7 +273,7 @@ app.get("/", (req, res) => {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>🎡POWER PUMP WHEEL🎡</title>
+    <title>🎡 POWER PUMP WHEEL 🎡</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -661,7 +671,7 @@ app.get("/", (req, res) => {
     </style>
 </head>
 <body>
-    <h1 class="powerball-header">🎡 POWER PUMP WHEEL 🎡</h1>
+    <h1 class="powerball-header">🎡  POWER PUMP WHEEL 🎡</h1>
     
     <div class="stats-bar">
         <div class="stat-card">
@@ -770,7 +780,7 @@ app.get("/", (req, res) => {
         </div>
 
         <div class="panel">
-            <div class="panel-title">📜Winner History</div>
+            <div class="panel-title">📜 WIN HISTORY</div>
             <div class="history-list" id="history-list">
                 ${cache.spinHistory.map(spin => `
                     <div class="history-item">
@@ -854,10 +864,16 @@ app.get("/", (req, res) => {
         }
 
         function updateAllData(data) {
-            document.getElementById('total-holders').textContent = data.holders.length;
-            document.getElementById('total-supply').textContent = data.holders.reduce((sum, h) => sum + h.amount, 0).toLocaleString();
-            document.getElementById('joker-count').textContent = data.jokerWallets.length;
+            document.getElementById('total-holders').textContent = data.totalHolders;
+            document.getElementById('total-supply').textContent = data.totalTokens.toLocaleString();
+            document.getElementById('joker-count').textContent = data.jokerCount;
+            document.getElementById('last-winner').textContent = data.spinHistory.length > 0 ? 
+                data.spinHistory[0].address.slice(0, 4) + '...' + data.spinHistory[0].address.slice(-4) : '-';
+            
             updateTimers(data);
+            updateHistoryList(data.spinHistory);
+            updateJokerWallets(data.jokerWallets);
+            updateJokerBonusWinners(data.jokerBonusWinners);
         }
 
         function updateTimers(data) {
@@ -906,8 +922,11 @@ app.get("/", (req, res) => {
                 \`;
                 
                 document.getElementById('last-winner').textContent = winner.address.slice(0, 4) + '...' + winner.address.slice(-4);
-                document.getElementById('joker-count').textContent = data.jokerWallets.length;
+                document.getElementById('joker-count').textContent = data.jokerCount;
+                document.getElementById('total-holders').textContent = data.totalHolders;
+                document.getElementById('total-supply').textContent = data.totalTokens.toLocaleString();
                 
+                updateTimers(data);
                 updateHistoryList(data.spinHistory);
                 updateJokerWallets(data.jokerWallets);
                 updateJokerBonusWinners(data.jokerBonusWinners);
@@ -948,7 +967,7 @@ app.get("/", (req, res) => {
         }
 
         function updateJokerBonusWinners(winners) {
-            const container = document.querySelector('.joker-bonus-section');
+            let container = document.querySelector('.joker-bonus-section');
             if (winners.length > 0) {
                 if (!container) {
                     const centerPanel = document.querySelector('.panel:nth-child(2)');
@@ -965,7 +984,21 @@ app.get("/", (req, res) => {
                             \`).join('')}
                         </div>
                     \`;
+                } else {
+                    container.innerHTML = \`
+                        <div class="joker-bonus-title">🎉 JOKER BONUS WINNERS 🎉</div>
+                        \${winners.map(wallet => \`
+                            <div class="joker-bonus-item">
+                                <span class="joker-bonus-badge">3</span>
+                                <a href="https://solscan.io/account/\${wallet}" target="_blank">
+                                    \${wallet.slice(0, 8)}...\${wallet.slice(-8)}
+                                </a>
+                            </div>
+                        \`).join('')}
+                    \`;
                 }
+            } else if (container) {
+                container.remove();
             }
         }
 
