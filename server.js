@@ -222,34 +222,46 @@ function autoSpin() {
 wss.on('connection', function connection(ws) {
     console.log('Client connected via WebSocket');
     
-    ws.send(JSON.stringify({
-        type: 'INIT',
-        data: {
-            holders: cache.holders,
-            spinHistory: cache.spinHistory,
-            jokerWallets: Array.from(cache.jokerWallets.entries()),
-            jokerBonusWinners: cache.jokerBonusWinners,
-            rewardsTransactions: cache.rewardsTransactions,
-            nextSpinTime: cache.nextSpinTime,
-            timeUntilNextSpin: Math.max(0, Math.floor((cache.nextSpinTime - Date.now()) / 1000)),
-            isSpinning: cache.isSpinning,
-            megaJackpotAmount: calculateMegaJackpot(),
-            megaJackpotTimeLeft: getMegaJackpotTime(),
-            totalHolders: cache.holders.length,
-            totalTokens: cache.holders.reduce((sum, h) => sum + h.amount, 0),
-            jokerCount: cache.jokerWallets.size
-        }
-    }));
+    const sendInitialData = () => {
+        const timeUntilNextSpin = Math.max(0, Math.floor((cache.nextSpinTime - Date.now()) / 1000));
+        const megaJackpotAmount = calculateMegaJackpot();
+        const megaJackpotTimeLeft = getMegaJackpotTime();
+        
+        ws.send(JSON.stringify({
+            type: 'INIT',
+            data: {
+                holders: cache.holders,
+                spinHistory: cache.spinHistory,
+                jokerWallets: Array.from(cache.jokerWallets.entries()),
+                jokerBonusWinners: cache.jokerBonusWinners,
+                rewardsTransactions: cache.rewardsTransactions,
+                nextSpinTime: cache.nextSpinTime,
+                timeUntilNextSpin: timeUntilNextSpin,
+                isSpinning: cache.isSpinning,
+                megaJackpotAmount: megaJackpotAmount,
+                megaJackpotTimeLeft: megaJackpotTimeLeft,
+                totalHolders: cache.holders.length,
+                totalTokens: cache.holders.reduce((sum, h) => sum + h.amount, 0),
+                jokerCount: cache.jokerWallets.size
+            }
+        }));
+    };
+    
+    sendInitialData();
 
     const interval = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
+            const timeUntilNextSpin = Math.max(0, Math.floor((cache.nextSpinTime - Date.now()) / 1000));
+            const megaJackpotAmount = calculateMegaJackpot();
+            const megaJackpotTimeLeft = getMegaJackpotTime();
+            
             ws.send(JSON.stringify({
-                type: 'UPDATE',
+                type: 'TIMER_UPDATE',
                 data: {
                     nextSpinTime: cache.nextSpinTime,
-                    timeUntilNextSpin: Math.max(0, Math.floor((cache.nextSpinTime - Date.now()) / 1000)),
-                    megaJackpotAmount: calculateMegaJackpot(),
-                    megaJackpotTimeLeft: getMegaJackpotTime(),
+                    timeUntilNextSpin: timeUntilNextSpin,
+                    megaJackpotAmount: megaJackpotAmount,
+                    megaJackpotTimeLeft: megaJackpotTimeLeft,
                     isSpinning: cache.isSpinning
                 }
             }));
@@ -667,11 +679,102 @@ app.get("/", (req, res) => {
         }
         ::-webkit-scrollbar-thumb:hover {
             background: rgba(255, 215, 0, 0.7);
-        }
+        }.wheel {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: linear-gradient(45deg, #ff0000, #ff6b00, #ffd700, #00ff88, #0066ff);
+    position: relative;
+    overflow: hidden;
+    border: 8px solid #ffd700;
+    box-shadow: 0 0 30px rgba(255, 215, 0, 0.5);
+    transition: transform 0.5s ease-out;
+    /* Add these lines to fix position and prevent movement */
+    transform: rotate(0deg) !important;
+    transform-origin: center center !important;
+}
+
+.wheel-spinning {
+    animation: spin 0.15s linear infinite;
+    /* Ensure spinning animation doesn't affect final position */
+    animation-fill-mode: none;
+}
+
+.wheel-slice {
+    position: absolute;
+    width: 50%;
+    height: 50%;
+    transform-origin: 100% 100%;
+    left: 0;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding-left: 40px;
+    font-size: 10px;
+    font-weight: bold;
+    color: white;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+    overflow: hidden;
+    /* Prevent text from affecting slice position */
+    box-sizing: border-box;
+}
+
+.wheel-slice > div {
+    /* Constrain text within slice */
+    max-width: 80px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* Ensure text rotation doesn't affect wheel position */
+    transform-origin: left center;
+}
+
+.current-winner {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) !important; /* Force center position */
+    background: rgba(0, 0, 0, 0.9);
+    padding: 15px;
+    border-radius: 12px;
+    text-align: center;
+    z-index: 50;
+    border: 2px solid #ffd700;
+    min-width: 150px;
+    font-size: 0.9em;
+    /* Prevent winner text from affecting wheel position */
+    box-sizing: border-box;
+    max-width: 180px;
+}
+
+.wheel-center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) !important; /* Force exact center */
+    width: 60px;
+    height: 60px;
+    background: radial-gradient(circle, #ff0000, #8b0000);
+    border-radius: 50%;
+    box-shadow: 0 0 20px rgba(255, 0, 0, 0.8);
+    z-index: 10;
+    border: 4px solid #ffd700;
+}
+
+/* Add this to ensure wheel container maintains fixed dimensions */
+.wheel-container {
+    position: relative;
+    width: 400px;
+    height: 400px;
+    margin: 0 auto;
+    /* Prevent container from resizing */
+    flex-shrink: 0;
+}
     </style>
 </head>
 <body>
-    <h1 class="powerball-header">🎡  POWER PUMP WHEEL 🎡</h1>
+    <h1 class="powerball-header">🎡 POWER PUMP WHEEL 🎡</h1>
     
     <div class="stats-bar">
         <div class="stat-card">
@@ -750,7 +853,32 @@ app.get("/", (req, res) => {
                 <div style="font-size: 0.9em; opacity: 0.8;">+$1 every minute!</div>
             </div>
 
-      
+            <div class="joker-wallets-row" id="joker-wallets-container">
+                ${Array.from(cache.jokerWallets.entries()).map(([wallet, count]) => `
+                    <div class="joker-wallet-item">
+                        <a href="https://solscan.io/account/${wallet}" target="_blank">
+                            ${wallet.slice(0, 6)}...${wallet.slice(-4)}
+                        </a>
+                        <div class="joker-wallet-jokers">${count}</div>
+                    </div>
+                `).join('')}
+            </div>
+
+            ${cache.jokerBonusWinners.length > 0 ? `
+            <div class="joker-bonus-section">
+                <div class="joker-bonus-title">🎉 JOKER BONUS WINNERS 🎉</div>
+                ${cache.jokerBonusWinners.map(wallet => {
+                    const jokerCount = cache.jokerWallets.get(wallet) || 0;
+                    return `
+                    <div class="joker-bonus-item">
+                        <span class="joker-bonus-badge">3</span>
+                        <a href="https://solscan.io/account/${wallet}" target="_blank">
+                            ${wallet.slice(0, 8)}...${wallet.slice(-8)}
+                        </a>
+                        <span style="margin-left: 5px; color: #ff00ff;">(${jokerCount} jokers)</span>
+                    </div>
+                `}).join('')}
+            </div>
             ` : ''}
         </div>
 
@@ -798,32 +926,7 @@ app.get("/", (req, res) => {
             </div>
         `}
     </div>
-      <div class="joker-wallets-row" id="joker-wallets-container">
-                ${Array.from(cache.jokerWallets.entries()).map(([wallet, count]) => `
-                    <div class="joker-wallet-item">
-                        <a href="https://solscan.io/account/${wallet}" target="_blank">
-                            ${wallet.slice(0, 6)}...${wallet.slice(-4)}
-                        </a>
-                        <div class="joker-wallet-jokers">${count}</div>
-                    </div>
-                `).join('')}
-            </div>
 
-            ${cache.jokerBonusWinners.length > 0 ? `
-            <div class="joker-bonus-section">
-                <div class="joker-bonus-title">🎉 JOKER BONUS WINNERS 🎉</div>
-                ${cache.jokerBonusWinners.map(wallet => {
-                    const jokerCount = cache.jokerWallets.get(wallet) || 0;
-                    return `
-                    <div class="joker-bonus-item">
-                        <span class="joker-bonus-badge">3</span>
-                        <a href="https://solscan.io/account/${wallet}" target="_blank">
-                            ${wallet.slice(0, 8)}...${wallet.slice(-8)}
-                        </a>
-                        <span style="margin-left: 5px; color: #ff00ff;">(${jokerCount} jokers)</span>
-                    </div>
-                `}).join('')}
-            </div>
     <script>
         let ws;
         let isSpinning = false;
@@ -845,8 +948,8 @@ app.get("/", (req, res) => {
                     case 'INIT':
                         updateAllData(data.data);
                         break;
-                    case 'UPDATE':
-                        updateTimers(data.data);
+                    case 'TIMER_UPDATE':
+                        updateAllTimers(data.data);
                         break;
                     case 'SPIN_START':
                         startWheelSpin();
@@ -870,17 +973,32 @@ app.get("/", (req, res) => {
             document.getElementById('last-winner').textContent = data.spinHistory.length > 0 ? 
                 data.spinHistory[0].address.slice(0, 4) + '...' + data.spinHistory[0].address.slice(-4) : '-';
             
-            updateTimers(data);
+            updateAllTimers(data);
             updateHistoryList(data.spinHistory);
             updateJokerWallets(data.jokerWallets);
             updateJokerBonusWinners(data.jokerBonusWinners);
         }
 
-        function updateTimers(data) {
-            document.getElementById('countdown-timer').textContent = data.timeUntilNextSpin;
-            document.getElementById('spin-timer').textContent = data.timeUntilNextSpin;
-            document.getElementById('next-spin').textContent = data.timeUntilNextSpin + 's';
+        function updateAllTimers(data) {
+            // Update ALL timer elements simultaneously
+            const timeUntilNextSpin = data.timeUntilNextSpin;
             
+            // Top stats bar timer
+            document.getElementById('next-spin').textContent = timeUntilNextSpin + 's';
+            
+            // Center countdown timer
+            document.getElementById('countdown-timer').textContent = timeUntilNextSpin;
+            document.getElementById('spin-timer').textContent = timeUntilNextSpin;
+            
+            // Update countdown text
+            const countdown = document.getElementById('countdown');
+            if (data.isSpinning) {
+                countdown.innerHTML = 'SPINNING...';
+            } else {
+                countdown.innerHTML = \`Next Spin: <span id="countdown-timer">\${timeUntilNextSpin}</span>s\`;
+            }
+            
+            // Mega jackpot timers
             const megaHours = Math.floor(data.megaJackpotTimeLeft / (1000 * 60 * 60));
             const megaMinutes = Math.floor((data.megaJackpotTimeLeft % (1000 * 60 * 60)) / (1000 * 60));
             document.getElementById('mega-jackpot-timer').textContent = megaHours + 'h ' + megaMinutes + 'm';
@@ -891,49 +1009,53 @@ app.get("/", (req, res) => {
             }
         }
 
-        function startWheelSpin() {
-            isSpinning = true;
-            const wheel = document.getElementById('wheel');
-            const countdown = document.getElementById('countdown');
-            
-            countdown.innerHTML = 'SPINNING...';
-            wheel.classList.add('wheel-spinning');
-            
-            document.getElementById('current-winner').innerHTML = '<div>Spinning...</div>';
-        }
+  function startWheelSpin() {
+    isSpinning = true;
+    const wheel = document.getElementById('wheel');
+    const countdown = document.getElementById('countdown');
+    
+    countdown.innerHTML = 'SPINNING...';
+    wheel.classList.add('wheel-spinning');
+    
+    document.getElementById('current-winner').innerHTML = '<div>Spinning...</div>';
+}
 
-        function showSpinResult(data) {
-            setTimeout(() => {
-                const wheel = document.getElementById('wheel');
-                wheel.classList.remove('wheel-spinning');
-                wheel.style.transform = 'rotate(0deg)';
-                
-                isSpinning = false;
-                
-                const winner = data.winner;
-                document.getElementById('current-winner').innerHTML = \`
-                    <div class="winner-address">
-                        \${winner.address.slice(0, 6)}...\${winner.address.slice(-4)}
-                    </div>
-                    <div class="winner-stats">
-                        \${winner.tokens.toLocaleString()} tokens<br>
-                    </div>
-                    \${winner.gotJoker ? \`<div class="joker-indicator" style="margin-top: 5px;">🎭 \${winner.jokerCount}/3</div>\` : ''}
-                \`;
-                
-                document.getElementById('last-winner').textContent = winner.address.slice(0, 4) + '...' + winner.address.slice(-4);
-                document.getElementById('joker-count').textContent = data.jokerCount;
-                document.getElementById('total-holders').textContent = data.totalHolders;
-                document.getElementById('total-supply').textContent = data.totalTokens.toLocaleString();
-                
-                updateTimers(data);
-                updateHistoryList(data.spinHistory);
-                updateJokerWallets(data.jokerWallets);
-                updateJokerBonusWinners(data.jokerBonusWinners);
-                
-            }, 1000);
-        }
-
+function showSpinResult(data) {
+    setTimeout(() => {
+        const wheel = document.getElementById('wheel');
+        wheel.classList.remove('wheel-spinning');
+        
+        // Force reset to exact center position
+        wheel.style.transform = 'rotate(0deg)';
+        wheel.style.transformOrigin = 'center center';
+        
+        isSpinning = false;
+        
+        const winner = data.winner;
+        document.getElementById('current-winner').innerHTML = `
+            <div class="winner-address">
+                ${winner.address.slice(0, 6)}...${winner.address.slice(-4)}
+            </div>
+            <div class="winner-stats">
+                ${winner.tokens.toLocaleString()} tokens<br>
+            </div>
+            ${winner.gotJoker ? `<div class="joker-indicator" style="margin-top: 5px;">🎭 ${winner.jokerCount}/3</div>` : ''}
+        `;
+        
+        // Update all data after spin
+        document.getElementById('last-winner').textContent = winner.address.slice(0, 4) + '...' + winner.address.slice(-4);
+        document.getElementById('joker-count').textContent = data.jokerCount;
+        document.getElementById('total-holders').textContent = data.totalHolders;
+        document.getElementById('total-supply').textContent = data.totalTokens.toLocaleString();
+        
+        // Update timers with new data
+        updateAllTimers(data);
+        updateHistoryList(data.spinHistory);
+        updateJokerWallets(data.jokerWallets);
+        updateJokerBonusWinners(data.jokerBonusWinners);
+        
+    }, 1000);
+}
         function updateHistoryList(history) {
             const historyList = document.getElementById('history-list');
             historyList.innerHTML = history.map(spin => \`
@@ -1002,34 +1124,38 @@ app.get("/", (req, res) => {
             }
         }
 
-        function createWheelSlices() {
-            const wheel = document.getElementById('wheel');
-            const currentWinnerDiv = document.getElementById('current-winner');
-            const wheelCenter = document.querySelector('.wheel-center');
-            wheel.innerHTML = '';
-            wheel.appendChild(currentWinnerDiv);
-            wheel.appendChild(wheelCenter);
-            
-            const sliceCount = Math.min(${cache.holders.length}, 24);
-            const angle = 360 / sliceCount;
-            
-            const wheelHolders = ${JSON.stringify(cache.holders)}.slice(0, sliceCount);
-            
-            wheelHolders.forEach((holder, index) => {
-                const slice = document.createElement('div');
-                slice.className = 'wheel-slice';
-                slice.style.transform = \`rotate(\${index * angle}deg)\`;
-                
-                const shortAddress = \`\${holder.owner.slice(0, 4)}...\${holder.owner.slice(-3)}\`;
-                slice.innerHTML = \`
-                    <div style="transform: rotate(\${90 - angle/2}deg); transform-origin: left center;">
-                        \${shortAddress}
-                    </div>
-                \`;
-                
-                wheel.appendChild(slice);
-            });
-        }
+     function createWheelSlices() {
+    const wheel = document.getElementById('wheel');
+    const currentWinnerDiv = document.getElementById('current-winner');
+    const wheelCenter = document.querySelector('.wheel-center');
+    wheel.innerHTML = '';
+    wheel.appendChild(currentWinnerDiv);
+    wheel.appendChild(wheelCenter);
+    
+    const sliceCount = Math.min(${cache.holders.length}, 24);
+    const angle = 360 / sliceCount;
+    
+    const wheelHolders = ${JSON.stringify(cache.holders)}.slice(0, sliceCount);
+    
+    wheelHolders.forEach((holder, index) => {
+        const slice = document.createElement('div');
+        slice.className = 'wheel-slice';
+        slice.style.transform = `rotate(${index * angle}deg)`;
+        
+        const shortAddress = `${holder.owner.slice(0, 4)}...${holder.owner.slice(-3)}`;
+        slice.innerHTML = `
+            <div style="transform: rotate(${90 - angle/2}deg); transform-origin: left center; max-width: 80px; overflow: hidden;">
+                ${shortAddress}
+            </div>
+        `;
+        
+        wheel.appendChild(slice);
+    });
+    
+    // Force wheel to exact center position
+    wheel.style.transform = 'rotate(0deg)';
+    wheel.style.transformOrigin = 'center center';
+}
 
         document.addEventListener('DOMContentLoaded', function() {
             createWheelSlices();
@@ -1042,9 +1168,10 @@ app.get("/", (req, res) => {
 });
 
 const server = app.listen(process.env.PORT || 1000, async () => {
-    console.log(`🎡 POWERPUMP WHEEL Server running on port ${process.env.PORT || 1000}`);
+    console.log(`🎡 POWER PUMP WHEEL Server running on port ${process.env.PORT || 1000}`);
     console.log("⏰ Server handles all timing and spins every 30 seconds");
     console.log("🔌 WebSocket enabled for real-time updates");
+    console.log("🔄 All timers are perfectly synced");
     
     await getHolders();
     await getRewardsTransactions();
@@ -1062,4 +1189,3 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
     });
 });
-
