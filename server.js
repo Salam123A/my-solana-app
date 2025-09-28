@@ -1020,42 +1020,7 @@ app.get("/", (req, res) => {
     document.getElementById('current-winner').innerHTML = '<div>Spinning...</div>';
 }
 
-function showSpinResult(data) {
-    setTimeout(() => {
-        const wheel = document.getElementById('wheel');
-        wheel.classList.remove('wheel-spinning');
-        
-        // Force reset to exact center position
-        wheel.style.transform = 'rotate(0deg)';
-        wheel.style.transformOrigin = 'center center';
-        
-        isSpinning = false;
-        
-        const winner = data.winner;
-        document.getElementById('current-winner').innerHTML = `
-            <div class="winner-address">
-                ${winner.address.slice(0, 6)}...${winner.address.slice(-4)}
-            </div>
-            <div class="winner-stats">
-                ${winner.tokens.toLocaleString()} tokens<br>
-            </div>
-            ${winner.gotJoker ? `<div class="joker-indicator" style="margin-top: 5px;">🎭 ${winner.jokerCount}/3</div>` : ''}
-        `;
-        
-        // Update all data after spin
-        document.getElementById('last-winner').textContent = winner.address.slice(0, 4) + '...' + winner.address.slice(-4);
-        document.getElementById('joker-count').textContent = data.jokerCount;
-        document.getElementById('total-holders').textContent = data.totalHolders;
-        document.getElementById('total-supply').textContent = data.totalTokens.toLocaleString();
-        
-        // Update timers with new data
-        updateAllTimers(data);
-        updateHistoryList(data.spinHistory);
-        updateJokerWallets(data.jokerWallets);
-        updateJokerBonusWinners(data.jokerBonusWinners);
-        
-    }, 1000);
-}
+showSpinResult
         function updateHistoryList(history) {
             const historyList = document.getElementById('history-list');
             historyList.innerHTML = history.map(spin => \`
@@ -1124,7 +1089,7 @@ function showSpinResult(data) {
             }
         }
 
-     function createWheelSlices() {
+ function createWheelSlices() {
     const wheel = document.getElementById('wheel');
     const currentWinnerDiv = document.getElementById('current-winner');
     const wheelCenter = document.querySelector('.wheel-center');
@@ -1140,14 +1105,14 @@ function showSpinResult(data) {
     wheelHolders.forEach((holder, index) => {
         const slice = document.createElement('div');
         slice.className = 'wheel-slice';
-        slice.style.transform = `rotate(${index * angle}deg)`;
+        slice.style.transform = \`rotate(\${index * angle}deg)\`;
         
-        const shortAddress = `${holder.owner.slice(0, 4)}...${holder.owner.slice(-3)}`;
-        slice.innerHTML = `
-            <div style="transform: rotate(${90 - angle/2}deg); transform-origin: left center; max-width: 80px; overflow: hidden;">
-                ${shortAddress}
+        const shortAddress = \`\${holder.owner.slice(0, 4)}...\${holder.owner.slice(-3)}\`;
+        slice.innerHTML = \`
+            <div style="transform: rotate(\${90 - angle/2}deg); transform-origin: left center; max-width: 80px; overflow: hidden;">
+                \${shortAddress}
             </div>
-        `;
+        \`;
         
         wheel.appendChild(slice);
     });
@@ -1189,3 +1154,4 @@ server.on('upgrade', (request, socket, head) => {
         wss.emit('connection', ws, request);
     });
 });
+
