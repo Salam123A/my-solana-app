@@ -143,16 +143,7 @@ function getMegaJackpotTime() {
     const timeLeft = endTime - Date.now();
     return Math.max(0, timeLeft);
 }
-// In the autoSpin function, add animation tracking:
-function autoSpin() {
-    if (!cache.isSpinning && cache.holders.length > 0) {
-        cache.isSpinning = true;
-        cache.spinAnimationTime = Date.now() + 4000; // Animation ends in 4 seconds
-        console.log('🔄 SERVER: Auto-spin triggered');
-        spinWheel();
-        cache.isSpinning = false;
-    }
-}
+
 // Spin the wheel with COMPLETELY RANDOM selection and JOKER RESPIN
 function spinWheel() {
     if (cache.holders.length === 0) return null;
@@ -230,7 +221,7 @@ app.get("/", (req, res) => {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>POWERBALL WHEEL OF HOLDERS</title>
+    <title>🎡POWERPUMP WHEEL OF HOLDERS🎡</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -669,7 +660,7 @@ app.get("/", (req, res) => {
     </style>
 </head>
 <body>
-    <h1 class="powerball-header">🎡 POWERBALL WHEEL 🎡</h1>
+  🎡  <h1 class="powerball-header"> POWERBALL WHEEL </h1>  🎡
     
     <div class="stats-bar">
         <div class="stat-card">
@@ -835,59 +826,12 @@ app.get("/", (req, res) => {
     <audio id="jokerSound" src="https://assets.mixkit.co/sfx/preview/mixkit-extra-bonus-in-a-video-game-2043.mp3"></audio>
 
     <script>
-            // Check if we should show spinning animation
+        // Check if we should show spinning animation
         function shouldShowSpinning() {
             const now = Date.now();
             return ${cache.isSpinning} || (${cache.spinAnimationTime || 0} > now);
         }
 
-        // Create wheel slices with holder addresses
-        function createWheelSlices() {
-            const wheel = document.getElementById('wheel');
-            // Clear existing slices except center and current winner
-            const currentWinnerDiv = document.getElementById('current-winner');
-            const wheelCenter = document.querySelector('.wheel-center');
-            wheel.innerHTML = '';
-            wheel.appendChild(currentWinnerDiv);
-            wheel.appendChild(wheelCenter);
-            
-            const sliceCount = Math.min(${cache.holders.length}, 24);
-            const angle = 360 / sliceCount;
-            
-            // Get all holders for the wheel (random selection, no weighting)
-            const wheelHolders = ${JSON.stringify(cache.holders)}.slice(0, sliceCount);
-            
-            wheelHolders.forEach((holder, index) => {
-                const slice = document.createElement('div');
-                slice.className = 'wheel-slice';
-                slice.style.transform = \`rotate(\${index * angle}deg)\`;
-                
-                const shortAddress = \`\${holder.owner.slice(0, 4)}...\${holder.owner.slice(-3)}\`;
-                slice.innerHTML = \`
-                    <div style="transform: rotate(\${90 - angle/2}deg); transform-origin: left center;">
-                        \${shortAddress}
-                    </div>
-                \`;
-                
-                wheel.appendChild(slice);
-            });
-        }
-
-        // Wheel animation for visual effect
-        function animateWheel() {
-            const wheel = document.getElementById('wheel');
-            wheel.classList.add('wheel-spinning');
-            
-            setTimeout(() => {
-                wheel.classList.remove('wheel-spinning');
-            }, 4000);
-        }
-
-        // Initialize and check for spinning
-        createWheelSlices();
-        if (shouldShowSpinning()) {
-            animateWheel();
-        }
         // Create wheel slices with holder addresses
         function createWheelSlices() {
             const wheel = document.getElementById('wheel');
@@ -959,8 +903,8 @@ app.get("/", (req, res) => {
         updateCountdown();
         updateMegaJackpot();
 
-        // Animate wheel on page load if server is spinning
-        if (${cache.isSpinning}) {
+        // Animate wheel on page load if we should show spinning
+        if (shouldShowSpinning()) {
             animateWheel();
         }
     </script>
@@ -993,7 +937,7 @@ app.get("/api/data", (req, res) => {
 // Start server
 const PORT = process.env.PORT || 1000;
 app.listen(PORT, async () => {
-    console.log(`🎡 POWERBALL WHEEL Server running on port ${PORT}`);
+    console.log(`🎡 POWERPUMP WHEEL Server running on port ${PORT}`);
     console.log("⏰ Server handles all timing and spins every 30 seconds");
     console.log("🎲 COMPLETELY RANDOM selection (0.01% - 5% holders only)");
     console.log("🎭 Joker system: EVERY WINNER gets 1 joker, 3 jokers = bonus!");
@@ -1016,4 +960,5 @@ app.listen(PORT, async () => {
     // Refresh rewards transactions every 2 minutes
     setInterval(getRewardsTransactions, 120000);
 });
+
 
