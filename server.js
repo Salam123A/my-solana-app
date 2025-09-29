@@ -9,28 +9,41 @@ const app = express();
 
 // Cabal Ranks
 const CABAL_RANKS = [
-    { name: "Academy", min: 10000, max: 50000, reward: 0.01, color: "#4a5568", bg: "rgba(74, 85, 104, 0.1)" },
-    { name: "Clan", min: 50000, max: 100000, reward: 0.1, color: "#2d3748", bg: "rgba(45, 55, 72, 0.1)" },
-    { name: "1st Royal Guard", min: 100000, max: 200000, reward: 0.2, color: "#2b6cb0", bg: "rgba(43, 108, 176, 0.1)" },
-    { name: "2nd Royal Guard", min: 200000, max: 300000, reward: 0.3, color: "#2c5aa0", bg: "rgba(44, 90, 160, 0.1)" },
-    { name: "1st Order of Knights", min: 300000, max: 400000, reward: 0.4, color: "#e53e3e", bg: "rgba(229, 62, 62, 0.1)" },
-    { name: "2nd Order of Knights", min: 400000, max: 500000, reward: 0.5, color: "#c53030", bg: "rgba(197, 48, 48, 0.1)" },
-    { name: "3rd Order of Knights", min: 500000, max: 600000, reward: 0.6, color: "#9b2c2c", bg: "rgba(155, 44, 44, 0.1)" },
-    { name: "4th Order of Knights", min: 600000, max: 1000000, reward: 0.7, color: "#742a2a", bg: "rgba(116, 42, 42, 0.1)" },
-    { name: "CABAL", min: 1000000, max: Infinity, reward: 1.0, color: "#000000", bg: "rgba(0, 0, 0, 0.2)" }
+    { name: "Academy", min: 10000, max: 50000, reward: 0.01, color: "#4a5568" },
+    { name: "Clan", min: 50000, max: 100000, reward: 0.1, color: "#2d3748" },
+    { name: "1st Royal Guard", min: 100000, max: 200000, reward: 0.2, color: "#2b6cb0" },
+    { name: "2nd Royal Guard", min: 200000, max: 300000, reward: 0.3, color: "#2c5aa0" },
+    { name: "1st Order of Knights", min: 300000, max: 400000, reward: 0.4, color: "#e53e3e" },
+    { name: "2nd Order of Knights", min: 400000, max: 500000, reward: 0.5, color: "#c53030" },
+    { name: "3rd Order of Knights", min: 500000, max: 600000, reward: 0.6, color: "#9b2c2c" },
+    { name: "4th Order of Knights", min: 600000, max: 1000000, reward: 0.7, color: "#742a2a" },
+    { name: "CABAL", min: 1000000, max: Infinity, reward: 1.0, color: "#000000" }
 ];
 
 let burnTracker = new Map();
 let totalBurned = 0;
-let scanProgress = { current: 0, total: 0, status: "Initializing..." };
+let scanStatus = "INITIALIZING_SYSTEM";
 let lastUpdate = Date.now();
 
 function getCabalRank(burned) {
     return CABAL_RANKS.find(rank => burned >= rank.min && burned < rank.max) || CABAL_RANKS[0];
 }
 
-function getProgressPercentage() {
-    return scanProgress.total > 0 ? (scanProgress.current / scanProgress.total) * 100 : 0;
+// Rate limiting helper
+async function rateLimitedCall(apiCall, retries = 5) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            return await apiCall();
+        } catch (error) {
+            if (error.message.includes('429') && attempt < retries) {
+                const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
+                console.log(`⚠️ Rate limited, waiting ${delay}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+            throw error;
+        }
+    }
 }
 
 app.get("/", (req, res) => {
@@ -40,17 +53,16 @@ app.get("/", (req, res) => {
             burned,
             rank: getCabalRank(burned)
         }))
-        .filter(burner => burner.burned >= 10000) // Only show 10k+ burned
-        .sort((a, b) => b.burned - a.burned);
+        .filter(burner => burner.burned >= 10000)
+        .sort((a, b) => b.burned - a.burned)
+        .slice(0, 15); // Limit to top 15
 
-    const progressPercent = getProgressPercentage();
-    
     res.setHeader("Content-Type", "text/html");
     res.end(`
         <!DOCTYPE html>
         <html>
         <head>
-            <title>THE CABAL - Elite Burn Ranks</title>
+            <title>// THE CABAL //</title>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
                 * {
@@ -60,437 +72,408 @@ app.get("/", (req, res) => {
                 }
                 
                 body {
-                    background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
-                    color: #e0e0e0;
-                    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+                    background: #000000;
+                    color: #00ff41;
+                    font-family: 'Courier New', 'Monaco', monospace;
                     min-height: 100vh;
-                    padding: 0;
-                    overflow-x: hidden;
+                    padding: 1rem;
+                    overflow: hidden;
+                    position: relative;
+                }
+
+                body::before {
+                    content: '';
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: 
+                        linear-gradient(90deg, transparent 95%, rgba(0, 255, 65, 0.03) 100%),
+                        linear-gradient(0deg, transparent 95%, rgba(0, 255, 65, 0.03) 100%);
+                    background-size: 20px 20px;
+                    pointer-events: none;
+                    z-index: -1;
+                }
+
+                .matrix-bg {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: linear-gradient(180deg, rgba(0,0,0,0.9) 0%, rgba(0,255,65,0.1) 100%);
+                    opacity: 0.1;
+                    z-index: -2;
                 }
 
                 .container {
-                    max-width: 98vw;
-                    margin: 0 auto;
-                    padding: 2rem;
                     display: grid;
-                    grid-template-columns: 300px 1fr;
-                    gap: 2rem;
-                    min-height: 100vh;
-                }
-
-                .sidebar {
-                    background: rgba(255, 255, 255, 0.05);
-                    backdrop-filter: blur(20px);
-                    border-radius: 20px;
-                    padding: 2rem;
-                    border: 1px solid rgba(255, 215, 0, 0.1);
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-                    height: fit-content;
-                    position: sticky;
-                    top: 2rem;
-                }
-
-                .main-content {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 2rem;
+                    grid-template-columns: 1fr 1fr 1fr;
+                    grid-template-rows: auto 1fr;
+                    gap: 1rem;
+                    height: 97vh;
+                    max-width: 100%;
                 }
 
                 .header {
+                    grid-column: 1 / -1;
+                    background: rgba(0, 0, 0, 0.8);
+                    border: 1px solid #00ff41;
+                    padding: 1rem;
                     text-align: center;
-                    padding: 2rem 0;
-                    background: linear-gradient(135deg, rgba(255,215,0,0.1) 0%, rgba(255,215,0,0.05) 100%);
-                    border-radius: 20px;
-                    border: 1px solid rgba(255, 215, 0, 0.2);
-                    margin-bottom: 0;
+                    box-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
+                    position: relative;
+                    overflow: hidden;
                 }
 
-                .cabal-title {
-                    font-size: 3.5rem;
-                    font-weight: 800;
-                    background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
-                    -webkit-background-clip: text;
-                    -webkit-text-fill-color: transparent;
-                    background-clip: text;
-                    text-shadow: 0 4px 8px rgba(255, 215, 0, 0.3);
-                    letter-spacing: 3px;
+                .header::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: -100%;
+                    width: 100%;
+                    height: 2px;
+                    background: linear-gradient(90deg, transparent, #00ff41, transparent);
+                    animation: scan 3s linear infinite;
+                }
+
+                @keyframes scan {
+                    0% { left: -100%; }
+                    100% { left: 100%; }
+                }
+
+                .title {
+                    font-size: 2.5rem;
+                    font-weight: bold;
+                    color: #00ff41;
+                    text-shadow: 0 0 10px #00ff41;
+                    letter-spacing: 4px;
+                    margin-bottom: 0.5rem;
+                }
+
+                .subtitle {
+                    color: #ff6b6b;
+                    font-size: 0.9rem;
+                    letter-spacing: 2px;
+                }
+
+                .panel {
+                    background: rgba(0, 0, 0, 0.9);
+                    border: 1px solid #00ff41;
+                    padding: 1rem;
+                    overflow: hidden;
+                    position: relative;
+                    box-shadow: inset 0 0 20px rgba(0, 255, 65, 0.1);
+                }
+
+                .panel::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 1px;
+                    background: linear-gradient(90deg, transparent, #00ff41, transparent);
+                }
+
+                .panel-title {
+                    color: #ff00ff;
+                    font-size: 1rem;
+                    font-weight: bold;
                     margin-bottom: 1rem;
+                    text-transform: uppercase;
+                    letter-spacing: 2px;
+                    border-bottom: 1px solid #ff00ff;
+                    padding-bottom: 0.5rem;
                 }
 
                 .stats-grid {
                     display: grid;
                     grid-template-columns: 1fr 1fr;
-                    gap: 1rem;
-                    margin: 1.5rem 0;
-                }
-
-                .stat-card {
-                    background: rgba(255, 255, 255, 0.08);
-                    padding: 1.5rem;
-                    border-radius: 15px;
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    text-align: center;
-                }
-
-                .stat-value {
-                    font-size: 2rem;
-                    font-weight: 700;
-                    color: #FFD700;
-                    margin-bottom: 0.5rem;
-                }
-
-                .stat-label {
-                    font-size: 0.9rem;
-                    color: #a0a0a0;
-                    text-transform: uppercase;
-                    letter-spacing: 1px;
-                }
-
-                .progress-section {
-                    background: rgba(255, 255, 255, 0.05);
-                    padding: 1.5rem;
-                    border-radius: 15px;
-                    border: 1px solid rgba(255, 215, 0, 0.2);
-                    margin: 1rem 0;
-                }
-
-                .progress-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
+                    gap: 0.5rem;
                     margin-bottom: 1rem;
                 }
 
-                .progress-bar {
-                    width: 100%;
-                    height: 12px;
-                    background: rgba(255, 255, 255, 0.1);
-                    border-radius: 10px;
-                    overflow: hidden;
+                .stat {
+                    background: rgba(0, 255, 65, 0.05);
+                    padding: 0.5rem;
+                    border: 1px solid rgba(0, 255, 65, 0.3);
                 }
 
-                .progress-fill {
-                    height: 100%;
-                    background: linear-gradient(90deg, #FFD700, #FF6B6B);
-                    border-radius: 10px;
-                    transition: width 0.5s ease;
-                    position: relative;
+                .stat-value {
+                    font-size: 1.2rem;
+                    font-weight: bold;
+                    color: #ffff00;
+                    margin-bottom: 0.2rem;
                 }
 
-                .progress-text {
-                    font-size: 0.9rem;
-                    color: #a0a0a0;
-                    margin-top: 0.5rem;
+                .stat-label {
+                    font-size: 0.7rem;
+                    color: #00ff41;
+                    text-transform: uppercase;
                 }
 
-                .ranks-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-                    gap: 1.5rem;
-                    margin-top: 1rem;
+                .ranks-container {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.3rem;
+                    max-height: 300px;
+                    overflow-y: auto;
                 }
 
-                .rank-card {
-                    background: rgba(255, 255, 255, 0.05);
-                    border-radius: 15px;
-                    padding: 1.5rem;
+                .rank-item {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 0.4rem;
                     border: 1px solid;
-                    transition: transform 0.3s ease, box-shadow 0.3s ease;
+                    font-size: 0.8rem;
+                    transition: all 0.3s ease;
                 }
 
-                .rank-card:hover {
-                    transform: translateY(-5px);
-                    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+                .rank-item:hover {
+                    transform: translateX(5px);
+                    box-shadow: 0 0 10px currentColor;
                 }
 
                 .rank-name {
-                    font-size: 1.2rem;
-                    font-weight: 700;
-                    margin-bottom: 0.5rem;
-                }
-
-                .rank-range {
-                    color: #a0a0a0;
-                    font-size: 0.9rem;
-                    margin-bottom: 0.5rem;
+                    font-weight: bold;
                 }
 
                 .rank-reward {
-                    color: #FFD700;
-                    font-weight: 600;
-                    font-size: 1.1rem;
+                    color: #ffff00;
+                    font-weight: bold;
                 }
 
-                .burners-section {
-                    background: rgba(255, 255, 255, 0.05);
-                    backdrop-filter: blur(20px);
-                    border-radius: 20px;
-                    padding: 2rem;
-                    border: 1px solid rgba(255, 215, 0, 0.1);
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-                }
-
-                .section-title {
-                    font-size: 1.8rem;
-                    font-weight: 700;
-                    color: #FFD700;
-                    margin-bottom: 1.5rem;
-                    text-align: center;
-                    text-transform: uppercase;
-                    letter-spacing: 2px;
-                }
-
-                .burners-grid {
-                    display: grid;
-                    gap: 1rem;
-                    max-height: 70vh;
+                .burners-list {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.5rem;
+                    max-height: 400px;
                     overflow-y: auto;
-                    padding-right: 1rem;
                 }
 
-                .burner-card {
-                    background: rgba(255, 255, 255, 0.08);
-                    border-radius: 15px;
-                    padding: 1.5rem;
-                    border-left: 4px solid;
-                    transition: all 0.3s ease;
+                .burner-item {
                     display: grid;
                     grid-template-columns: auto 1fr auto;
-                    gap: 1rem;
+                    gap: 0.5rem;
+                    padding: 0.5rem;
+                    background: rgba(255, 255, 255, 0.05);
+                    border: 1px solid;
+                    font-size: 0.8rem;
+                    align-items: center;
+                    transition: all 0.3s ease;
+                }
+
+                .burner-item:hover {
+                    background: rgba(255, 255, 255, 0.1);
+                    transform: translateX(3px);
+                }
+
+                .burner-rank {
+                    padding: 0.2rem 0.5rem;
+                    font-size: 0.7rem;
+                    font-weight: bold;
+                    text-align: center;
+                    min-width: 80px;
+                }
+
+                .burner-wallet {
+                    font-family: 'Courier New', monospace;
+                    color: #00ffff;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                .burner-amount {
+                    color: #ff6b6b;
+                    font-weight: bold;
+                    text-align: right;
+                    min-width: 80px;
+                }
+
+                .status-bar {
+                    grid-column: 1 / -1;
+                    background: rgba(0, 0, 0, 0.9);
+                    border: 1px solid #00ff41;
+                    padding: 0.5rem 1rem;
+                    font-size: 0.8rem;
+                    color: #ffff00;
+                    display: flex;
+                    justify-content: space-between;
                     align-items: center;
                 }
 
-                .burner-card:hover {
-                    background: rgba(255, 255, 255, 0.12);
-                    transform: translateX(5px);
-                }
-
-                .rank-badge {
-                    padding: 0.5rem 1rem;
-                    border-radius: 20px;
-                    font-size: 0.8rem;
-                    font-weight: 700;
-                    text-align: center;
-                    min-width: 120px;
-                }
-
-                .wallet-info {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 0.25rem;
-                }
-
-                .wallet-address {
-                    font-family: 'Courier New', monospace;
-                    font-weight: 600;
-                    color: #87ceeb;
-                }
-
-                .wallet-short {
-                    font-size: 0.8rem;
-                    color: #a0a0a0;
-                }
-
-                .burn-stats {
-                    text-align: right;
-                }
-
-                .burn-amount {
-                    font-size: 1.3rem;
-                    font-weight: 800;
-                    color: #ff6b6b;
-                    margin-bottom: 0.25rem;
-                }
-
-                .fee-reward {
-                    font-size: 0.9rem;
-                    color: #FFD700;
-                    font-weight: 600;
-                }
-
-                .last-update {
-                    text-align: center;
-                    color: #666;
-                    font-size: 0.8rem;
-                    margin-top: 1rem;
-                    padding-top: 1rem;
-                    border-top: 1px solid rgba(255, 255, 255, 0.1);
-                }
-
-                /* Scrollbar Styling */
-                .burners-grid::-webkit-scrollbar {
-                    width: 6px;
-                }
-
-                .burners-grid::-webkit-scrollbar-track {
-                    background: rgba(255, 255, 255, 0.1);
-                    border-radius: 3px;
-                }
-
-                .burners-grid::-webkit-scrollbar-thumb {
-                    background: linear-gradient(135deg, #FFD700, #FF6B6B);
-                    border-radius: 3px;
-                }
-
-                .burners-grid::-webkit-scrollbar-thumb:hover {
-                    background: linear-gradient(135deg, #FFA500, #FF5252);
-                }
-
-                @media (max-width: 1400px) {
-                    .container {
-                        grid-template-columns: 1fr;
-                    }
-                    
-                    .sidebar {
-                        position: relative;
-                        top: 0;
-                    }
-                    
-                    .ranks-grid {
-                        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                    }
-                }
-
-                .loading-pulse {
+                .status-pulse {
                     animation: pulse 2s infinite;
                 }
 
                 @keyframes pulse {
-                    0% { opacity: 1; }
-                    50% { opacity: 0.7; }
-                    100% { opacity: 1; }
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.5; }
+                }
+
+                /* Scrollbar */
+                ::-webkit-scrollbar {
+                    width: 6px;
+                }
+
+                ::-webkit-scrollbar-track {
+                    background: rgba(0, 255, 65, 0.1);
+                }
+
+                ::-webkit-scrollbar-thumb {
+                    background: #00ff41;
+                    border-radius: 3px;
+                }
+
+                ::-webkit-scrollbar-thumb:hover {
+                    background: #00cc33;
+                }
+
+                .glitch {
+                    animation: glitch 5s infinite;
+                }
+
+                @keyframes glitch {
+                    0% { text-shadow: 2px 2px #ff00ff, -2px -2px #00ffff; }
+                    50% { text-shadow: -2px -2px #ff00ff, 2px 2px #00ffff; }
+                    100% { text-shadow: 2px 2px #ff00ff, -2px -2px #00ffff; }
                 }
             </style>
         </head>
         <body>
+            <div class="matrix-bg"></div>
+            
             <div class="container">
-                <!-- Sidebar -->
-                <div class="sidebar">
-                    <div class="header">
-                        <div class="cabal-title">CABAL</div>
-                        <div style="color: #a0a0a0; font-size: 1.1rem;">Elite Burn Ranks</div>
-                    </div>
+                <!-- Header -->
+                <div class="header">
+                    <div class="title glitch">// THE CABAL //</div>
+                    <div class="subtitle">ELITE BURNER RANKS // TOKEN INCINERATION PROTOCOL</div>
+                </div>
 
+                <!-- Panel 1: Stats -->
+                <div class="panel">
+                    <div class="panel-title">SYSTEM OVERVIEW</div>
                     <div class="stats-grid">
-                        <div class="stat-card">
+                        <div class="stat">
                             <div class="stat-value">${burnTracker.size}</div>
-                            <div class="stat-label">Elite Members</div>
+                            <div class="stat-label">INITIATES</div>
                         </div>
-                        <div class="stat-card">
+                        <div class="stat">
                             <div class="stat-value">${totalBurned.toLocaleString()}</div>
-                            <div class="stat-label">Total Burned</div>
+                            <div class="stat-label">TOKENS BURNED</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-value">${CABAL_RANKS.length}</div>
+                            <div class="stat-label">RANKS</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-value">${topBurners.filter(b => b.rank.name === 'THE CABAL').length}</div>
+                            <div class="stat-label">CABAL MEMBERS</div>
                         </div>
                     </div>
-
-                    <div class="progress-section">
-                        <div class="progress-header">
-                            <div style="font-weight: 600; color: #FFD700;">Scan Progress</div>
-                            <div style="font-size: 0.9rem; color: #a0a0a0;">${progressPercent.toFixed(1)}%</div>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" style="width: ${progressPercent}%"></div>
-                        </div>
-                        <div class="progress-text">${scanProgress.status}</div>
-                    </div>
-
-                    <div style="margin-top: 2rem;">
-                        <h3 style="color: #FFD700; margin-bottom: 1rem; text-align: center;">RANK STRUCTURE</h3>
-                        <div class="ranks-grid">
-                            ${CABAL_RANKS.map(rank => `
-                                <div class="rank-card" style="border-color: ${rank.color}; background: ${rank.bg}">
-                                    <div class="rank-name" style="color: ${rank.color}">${rank.name}</div>
-                                    <div class="rank-range">${rank.min.toLocaleString()}+ tokens</div>
-                                    <div class="rank-reward">${rank.reward}% fees</div>
-                                </div>
-                            `).join('')}
-                        </div>
+                    <div style="margin-top: 1rem; color: #ff00ff; font-size: 0.8rem;">
+                        <div>MINIMUM ENTRY: 10,000 TOKENS</div>
+                        <div>LAST UPDATE: ${new Date(lastUpdate).toLocaleTimeString()}</div>
                     </div>
                 </div>
 
-                <!-- Main Content -->
-                <div class="main-content">
-                    <div class="burners-section">
-                        <div class="section-title">ELITE BURNERS (10K+ TOKENS)</div>
-                        <div class="burners-grid">
-                            ${topBurners.length > 0 ? topBurners.map((burner, index) => `
-                                <div class="burner-card" style="border-color: ${burner.rank.color}">
-                                    <div class="rank-badge" style="background: ${burner.rank.bg}; color: ${burner.rank.color}; border: 1px solid ${burner.rank.color}">
-                                        ${burner.rank.name}
-                                    </div>
-                                    <div class="wallet-info">
-                                        <div class="wallet-address">${burner.wallet}</div>
-                                        <div class="wallet-short">${burner.wallet.substring(0, 8)}...${burner.wallet.substring(burner.wallet.length - 8)}</div>
-                                    </div>
-                                    <div class="burn-stats">
-                                        <div class="burn-amount">${burner.burned.toLocaleString()}</div>
-                                        <div class="fee-reward">${burner.rank.reward}% fees</div>
-                                    </div>
-                                </div>
-                            `).join('') : `
-                                <div style="text-align: center; padding: 3rem; color: #666;">
-                                    <div style="font-size: 1.2rem; margin-bottom: 1rem;">No elite burners found yet</div>
-                                    <div>Minimum 10,000 tokens burned required</div>
-                                </div>
-                            `}
-                        </div>
+                <!-- Panel 2: Ranks -->
+                <div class="panel">
+                    <div class="panel-title">RANK STRUCTURE</div>
+                    <div class="ranks-container">
+                        ${CABAL_RANKS.map(rank => `
+                            <div class="rank-item" style="border-color: ${rank.color}; color: ${rank.color}">
+                                <span class="rank-name">${rank.name}</span>
+                                <span class="rank-reward">${rank.reward}%</span>
+                            </div>
+                        `).join('')}
                     </div>
+                </div>
 
-                    <div class="last-update">
-                        Last updated: ${new Date(lastUpdate).toLocaleString()} | 
-                        <span class="loading-pulse">Live Updates Active</span>
+                <!-- Panel 3: Top Burners -->
+                <div class="panel">
+                    <div class="panel-title">ELITE BURNERS</div>
+                    <div class="burners-list">
+                        ${topBurners.length > 0 ? topBurners.map((burner, index) => `
+                            <div class="burner-item" style="border-color: ${burner.rank.color}">
+                                <div class="burner-rank" style="background: ${burner.rank.bg}; color: ${burner.rank.color}">
+                                    ${burner.rank.name.split(' ')[0]}
+                                </div>
+                                <div class="burner-wallet" title="${burner.wallet}">
+                                    ${burner.wallet.substring(0, 6)}...${burner.wallet.substring(burner.wallet.length - 4)}
+                                </div>
+                                <div class="burner-amount">${burner.burned.toLocaleString()}</div>
+                            </div>
+                        `).join('') : `
+                            <div style="text-align: center; color: #666; padding: 2rem; font-size: 0.9rem;">
+                                NO ELITE BURNERS DETECTED<br>
+                                <span style="color: #ff6b6b;">MINIMUM 10K TOKENS REQUIRED</span>
+                            </div>
+                        `}
                     </div>
+                </div>
+
+                <!-- Status Bar -->
+                <div class="status-bar">
+                    <div>STATUS: <span class="status-pulse">${scanStatus}</span></div>
+                    <div>SYSTEM: <span style="color: #00ff41;">OPERATIONAL</span></div>
+                    <div>PROTOCOL: <span style="color: #ff00ff;">BURN_TRACKER_V2</span></div>
                 </div>
             </div>
 
             <script>
-                // Auto-refresh every 10 seconds
-                setInterval(() => {
+                // Auto-refresh every 15 seconds
+                setTimeout(() => {
                     window.location.reload();
-                }, 10000);
+                }, 15000);
             </script>
         </body>
         </html>
     `);
 });
 
-// Optimized batch scanning
+// Optimized scanning with proper rate limiting
 async function scanTokenBurns() {
     try {
-        console.log("🚀 Starting optimized burn scan...");
-        scanProgress = { current: 0, total: 1000, status: "Fetching transactions..." };
+        scanStatus = "SCANNING_TRANSACTIONS";
+        console.log("🔍 Scanning token burn history...");
         
-        // Get signatures in larger batches
-        const signatures = await connection.getSignaturesForAddress(TOKEN_MINT, { 
-            limit: 1000,
-            before: lastSignature 
-        });
+        // Use rate limiting for all RPC calls
+        const signatures = await rateLimitedCall(() => 
+            connection.getSignaturesForAddress(TOKEN_MINT, { limit: 500 })
+        );
+
+        let processed = 0;
+        const batchSize = 5; // Smaller batches to avoid rate limits
         
-        scanProgress.total = signatures.length;
-        scanProgress.status = "Analyzing transactions...";
-        
-        // Process in parallel batches
-        const batchSize = 10;
         for (let i = 0; i < signatures.length; i += batchSize) {
             const batch = signatures.slice(i, i + batchSize);
             
-            // Process batch in parallel
-            await Promise.all(batch.map(async (sig, index) => {
-                if (processedSignatures.has(sig.signature)) return;
+            // Process with delays between batches
+            for (const sig of batch) {
+                if (processedSignatures.has(sig.signature)) {
+                    processed++;
+                    continue;
+                }
                 
                 try {
-                    const tx = await connection.getTransaction(sig.signature, {
-                        commitment: "confirmed",
-                        maxSupportedTransactionVersion: 0
-                    });
+                    const tx = await rateLimitedCall(() =>
+                        connection.getTransaction(sig.signature, {
+                            commitment: "confirmed",
+                            maxSupportedTransactionVersion: 0
+                        })
+                    );
                     
                     if (tx?.meta) {
                         const burns = analyzeTransactionForBurns(tx, sig.signature);
                         for (const burn of burns) {
-                            if (burn.amount >= 10000) { // Only track 10k+ burns
+                            if (burn.amount >= 10000) {
                                 const currentTotal = burnTracker.get(burn.wallet) || 0;
                                 burnTracker.set(burn.wallet, currentTotal + burn.amount);
                                 totalBurned += burn.amount;
-                                console.log(`🔥 ${burn.wallet.substring(0, 8)}... burned ${burn.amount.toLocaleString()} tokens`);
                             }
                         }
                     }
@@ -499,25 +482,26 @@ async function scanTokenBurns() {
                 } catch (e) {
                     console.log('Error processing tx:', e.message);
                 }
-            }));
+                
+                processed++;
+            }
             
-            scanProgress.current = Math.min(i + batchSize, signatures.length);
-            lastUpdate = Date.now();
-            
-            // Small delay between batches
-            await new Promise(r => setTimeout(r, 50));
+            // Longer delay between batches to avoid 429
+            await new Promise(r => setTimeout(r, 1000));
+            scanStatus = `PROCESSING: ${processed}/${signatures.length}`;
         }
         
         console.log(`✅ Scan complete. Found ${burnTracker.size} elite burners`);
-        scanProgress.status = "Scan complete";
+        scanStatus = "SYNC_COMPLETE";
+        lastUpdate = Date.now();
         
     } catch (e) {
         console.log('Scan error:', e.message);
-        scanProgress.status = "Error: " + e.message;
+        scanStatus = "ERROR: " + e.message;
     }
 }
 
-// Optimized burn analysis
+// Fast burn analysis
 function analyzeTransactionForBurns(tx, signature) {
     const burns = [];
     
@@ -528,7 +512,6 @@ function analyzeTransactionForBurns(tx, signature) {
     const preBalances = tx.meta.preTokenBalances;
     const postBalances = tx.meta.postTokenBalances;
     
-    // Quick analysis - only check significant burns
     for (const preBalance of preBalances) {
         if (preBalance.mint === TOKEN_MINT.toBase58()) {
             const wallet = preBalance.owner;
@@ -539,28 +522,12 @@ function analyzeTransactionForBurns(tx, signature) {
             );
             const postAmount = postBalance?.uiTokenAmount?.uiAmount || 0;
             
-            // Only consider burns of 10k+ tokens
             if (preAmount - postAmount >= 10000) {
-                const burnedAmount = preAmount - postAmount;
-                
-                // Quick transfer check
-                const otherReceivers = postBalances
-                    .filter(pb => pb.mint === TOKEN_MINT.toBase58() && pb.owner !== wallet)
-                    .reduce((sum, pb) => sum + (pb.uiTokenAmount?.uiAmount || 0), 0);
-                
-                const otherSenders = preBalances
-                    .filter(pb => pb.mint === TOKEN_MINT.toBase58() && pb.owner !== wallet)
-                    .reduce((sum, pb) => sum + (pb.uiTokenAmount?.uiAmount || 0), 0);
-                
-                const netTransfer = otherReceivers - otherSenders;
-                
-                if (burnedAmount > netTransfer) {
-                    burns.push({
-                        wallet: wallet,
-                        amount: burnedAmount - Math.max(0, netTransfer),
-                        signature: signature
-                    });
-                }
+                burns.push({
+                    wallet: wallet,
+                    amount: preAmount - postAmount,
+                    signature: signature
+                });
             }
         }
     }
@@ -569,20 +536,19 @@ function analyzeTransactionForBurns(tx, signature) {
 }
 
 const processedSignatures = new Set();
-let lastSignature = null;
 
-// Fast scanning with progress tracking
+// Start scanner with longer intervals
 async function startScanner() {
     await scanTokenBurns();
     
-    // Faster rescan every 2 minutes
+    // Longer intervals to avoid rate limits
     setInterval(async () => {
-        console.log("🔄 Fast rescanning...");
+        console.log("🔄 Rescanning...");
         await scanTokenBurns();
-    }, 2 * 60 * 1000);
+    }, 10 * 60 * 1000); // 10 minutes
 }
 
 app.listen(1000, () => {
-    console.log('🔥 ELITE CABAL burn scanner at http://localhost:1000');
+    console.log('🔥 THE CABAL active at http://localhost:1000');
     startScanner();
 });
