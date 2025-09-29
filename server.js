@@ -7,23 +7,24 @@ const TOKEN_MINT = new PublicKey("47TE3qRYoWdGFcvafubPLHPtNmhRQtcTWDUWkLw4oNy8")
 
 const app = express();
 
-// Cabal Ranks
+// Cabal Ranks - Dark Theme
 const CABAL_RANKS = [
-    { name: "Academy", min: 10000, max: 50000, reward: 0.01, color: "#4a5568" },
-    { name: "Clan", min: 50000, max: 100000, reward: 0.1, color: "#2d3748" },
-    { name: "1st Royal Guard", min: 100000, max: 200000, reward: 0.2, color: "#2b6cb0" },
-    { name: "2nd Royal Guard", min: 200000, max: 300000, reward: 0.3, color: "#2c5aa0" },
-    { name: "1st Order of Knights", min: 300000, max: 400000, reward: 0.4, color: "#e53e3e" },
-    { name: "2nd Order of Knights", min: 400000, max: 500000, reward: 0.5, color: "#c53030" },
-    { name: "3rd Order of Knights", min: 500000, max: 600000, reward: 0.6, color: "#9b2c2c" },
-    { name: "4th Order of Knights", min: 600000, max: 1000000, reward: 0.7, color: "#742a2a" },
-    { name: "CABAL", min: 1000000, max: Infinity, reward: 1.0, color: "#000000" }
+    { name: "ACADEMY", min: 10000, max: 50000, reward: 0.01, color: "#00ff41", bg: "rgba(0, 255, 65, 0.1)" },
+    { name: "CLAN", min: 50000, max: 100000, reward: 0.1, color: "#ff6b6b", bg: "rgba(255, 107, 107, 0.1)" },
+    { name: "ROYAL GUARD I", min: 100000, max: 200000, reward: 0.2, color: "#ff00ff", bg: "rgba(255, 0, 255, 0.1)" },
+    { name: "ROYAL GUARD II", min: 200000, max: 300000, reward: 0.3, color: "#ff4444", bg: "rgba(255, 68, 68, 0.1)" },
+    { name: "KNIGHTS I", min: 300000, max: 400000, reward: 0.4, color: "#ffff00", bg: "rgba(255, 255, 0, 0.1)" },
+    { name: "KNIGHTS II", min: 400000, max: 500000, reward: 0.5, color: "#00ffff", bg: "rgba(0, 255, 255, 0.1)" },
+    { name: "KNIGHTS III", min: 500000, max: 600000, reward: 0.6, color: "#ffa500", bg: "rgba(255, 165, 0, 0.1)" },
+    { name: "KNIGHTS IV", min: 600000, max: 1000000, reward: 0.7, color: "#ff0000", bg: "rgba(255, 0, 0, 0.1)" },
+    { name: "THE CABAL", min: 1000000, max: Infinity, reward: 1.0, color: "#ffffff", bg: "linear-gradient(45deg, #000000, #ff0000)" }
 ];
 
 let burnTracker = new Map();
 let totalBurned = 0;
 let scanStatus = "INITIALIZING_SYSTEM";
 let lastUpdate = Date.now();
+let payoutProgress = 45; // Example progress - you can update this dynamically
 
 function getCabalRank(burned) {
     return CABAL_RANKS.find(rank => burned >= rank.min && burned < rank.max) || CABAL_RANKS[0];
@@ -55,7 +56,13 @@ app.get("/", (req, res) => {
         }))
         .filter(burner => burner.burned >= 10000)
         .sort((a, b) => b.burned - a.burned)
-        .slice(0, 15); // Limit to top 15
+        .slice(0, 12); // Limit to top 12
+
+    // Group burners by rank for display
+    const cabalMembers = topBurners.filter(b => b.rank.name === "THE CABAL");
+    const knightsMembers = topBurners.filter(b => b.rank.name.startsWith("KNIGHTS"));
+    const royalGuardMembers = topBurners.filter(b => b.rank.name.startsWith("ROYAL GUARD"));
+    const otherMembers = topBurners.filter(b => !["THE CABAL", "KNIGHTS", "ROYAL GUARD"].some(rank => b.rank.name.includes(rank)));
 
     res.setHeader("Content-Type", "text/html");
     res.end(`
@@ -110,7 +117,7 @@ app.get("/", (req, res) => {
                 .container {
                     display: grid;
                     grid-template-columns: 1fr 1fr 1fr;
-                    grid-template-rows: auto 1fr;
+                    grid-template-rows: auto 1fr auto;
                     gap: 1rem;
                     height: 97vh;
                     max-width: 100%;
@@ -214,47 +221,15 @@ app.get("/", (req, res) => {
                     text-transform: uppercase;
                 }
 
-                .ranks-container {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 0.3rem;
+                .members-grid {
+                    display: grid;
+                    grid-template-columns: 1fr;
+                    gap: 0.5rem;
                     max-height: 300px;
                     overflow-y: auto;
                 }
 
-                .rank-item {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 0.4rem;
-                    border: 1px solid;
-                    font-size: 0.8rem;
-                    transition: all 0.3s ease;
-                }
-
-                .rank-item:hover {
-                    transform: translateX(5px);
-                    box-shadow: 0 0 10px currentColor;
-                }
-
-                .rank-name {
-                    font-weight: bold;
-                }
-
-                .rank-reward {
-                    color: #ffff00;
-                    font-weight: bold;
-                }
-
-                .burners-list {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 0.5rem;
-                    max-height: 400px;
-                    overflow-y: auto;
-                }
-
-                .burner-item {
+                .member-item {
                     display: grid;
                     grid-template-columns: auto 1fr auto;
                     gap: 0.5rem;
@@ -264,14 +239,16 @@ app.get("/", (req, res) => {
                     font-size: 0.8rem;
                     align-items: center;
                     transition: all 0.3s ease;
+                    text-decoration: none;
                 }
 
-                .burner-item:hover {
+                .member-item:hover {
                     background: rgba(255, 255, 255, 0.1);
                     transform: translateX(3px);
+                    text-decoration: none;
                 }
 
-                .burner-rank {
+                .member-rank {
                     padding: 0.2rem 0.5rem;
                     font-size: 0.7rem;
                     font-weight: bold;
@@ -279,18 +256,94 @@ app.get("/", (req, res) => {
                     min-width: 80px;
                 }
 
-                .burner-wallet {
+                .member-wallet {
                     font-family: 'Courier New', monospace;
                     color: #00ffff;
                     overflow: hidden;
                     text-overflow: ellipsis;
                 }
 
-                .burner-amount {
+                .member-amount {
                     color: #ff6b6b;
                     font-weight: bold;
                     text-align: right;
                     min-width: 80px;
+                }
+
+                .payout-section {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 1rem;
+                }
+
+                .progress-container {
+                    background: rgba(0, 255, 65, 0.05);
+                    border: 1px solid #00ff41;
+                    padding: 1rem;
+                }
+
+                .progress-header {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-bottom: 0.5rem;
+                    font-size: 0.9rem;
+                }
+
+                .progress-bar {
+                    width: 100%;
+                    height: 20px;
+                    background: rgba(0, 255, 65, 0.1);
+                    border: 1px solid #00ff41;
+                    position: relative;
+                    overflow: hidden;
+                }
+
+                .progress-fill {
+                    height: 100%;
+                    background: linear-gradient(90deg, #00ff41, #ffff00);
+                    transition: width 0.5s ease;
+                    position: relative;
+                }
+
+                .progress-fill::after {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+                    animation: shimmer 2s infinite;
+                }
+
+                @keyframes shimmer {
+                    0% { transform: translateX(-100%); }
+                    100% { transform: translateX(100%); }
+                }
+
+                .progress-text {
+                    text-align: center;
+                    font-size: 1.2rem;
+                    font-weight: bold;
+                    color: #ffff00;
+                    margin-top: 0.5rem;
+                }
+
+                .payouts-list {
+                    max-height: 200px;
+                    overflow-y: auto;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.3rem;
+                }
+
+                .payout-item {
+                    padding: 0.5rem;
+                    background: rgba(255, 255, 0, 0.05);
+                    border: 1px solid #ffff00;
+                    font-size: 0.8rem;
+                    display: flex;
+                    justify-content: space-between;
                 }
 
                 .status-bar {
@@ -341,6 +394,13 @@ app.get("/", (req, res) => {
                     50% { text-shadow: -2px -2px #ff00ff, 2px 2px #00ffff; }
                     100% { text-shadow: 2px 2px #ff00ff, -2px -2px #00ffff; }
                 }
+
+                .empty-state {
+                    text-align: center;
+                    color: #666;
+                    padding: 2rem;
+                    font-size: 0.9rem;
+                }
             </style>
         </head>
         <body>
@@ -353,64 +413,78 @@ app.get("/", (req, res) => {
                     <div class="subtitle">ELITE BURNER RANKS // TOKEN INCINERATION PROTOCOL</div>
                 </div>
 
-                <!-- Panel 1: Stats -->
+                <!-- Panel 1: CABAL MEMBERS -->
                 <div class="panel">
-                    <div class="panel-title">SYSTEM OVERVIEW</div>
-                    <div class="stats-grid">
-                        <div class="stat">
-                            <div class="stat-value">${burnTracker.size}</div>
-                            <div class="stat-label">INITIATES</div>
-                        </div>
-                        <div class="stat">
-                            <div class="stat-value">${totalBurned.toLocaleString()}</div>
-                            <div class="stat-label">TOKENS BURNED</div>
-                        </div>
-                        <div class="stat">
-                            <div class="stat-value">${CABAL_RANKS.length}</div>
-                            <div class="stat-label">RANKS</div>
-                        </div>
-                        <div class="stat">
-                            <div class="stat-value">${topBurners.filter(b => b.rank.name === 'THE CABAL').length}</div>
-                            <div class="stat-label">CABAL MEMBERS</div>
-                        </div>
-                    </div>
-                    <div style="margin-top: 1rem; color: #ff00ff; font-size: 0.8rem;">
-                        <div>MINIMUM ENTRY: 10,000 TOKENS</div>
-                        <div>LAST UPDATE: ${new Date(lastUpdate).toLocaleTimeString()}</div>
-                    </div>
-                </div>
-
-                <!-- Panel 2: Ranks -->
-                <div class="panel">
-                    <div class="panel-title">RANK STRUCTURE</div>
-                    <div class="ranks-container">
-                        ${CABAL_RANKS.map(rank => `
-                            <div class="rank-item" style="border-color: ${rank.color}; color: ${rank.color}">
-                                <span class="rank-name">${rank.name}</span>
-                                <span class="rank-reward">${rank.reward}%</span>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-
-                <!-- Panel 3: Top Burners -->
-                <div class="panel">
-                    <div class="panel-title">ELITE BURNERS</div>
-                    <div class="burners-list">
-                        ${topBurners.length > 0 ? topBurners.map((burner, index) => `
-                            <div class="burner-item" style="border-color: ${burner.rank.color}">
-                                <div class="burner-rank" style="background: ${burner.rank.bg}; color: ${burner.rank.color}">
-                                    ${burner.rank.name.split(' ')[0]}
+                    <div class="panel-title">THE CABAL</div>
+                    <div class="members-grid">
+                        ${cabalMembers.length > 0 ? cabalMembers.map((member, index) => `
+                            <a href="https://solscan.io/account/${member.wallet}" target="_blank" class="member-item" style="border-color: ${member.rank.color}">
+                                <div class="member-rank" style="background: ${member.rank.bg}; color: ${member.rank.color}">
+                                    CABAL
                                 </div>
-                                <div class="burner-wallet" title="${burner.wallet}">
-                                    ${burner.wallet.substring(0, 6)}...${burner.wallet.substring(burner.wallet.length - 4)}
+                                <div class="member-wallet" title="${member.wallet}">
+                                    ${member.wallet.substring(0, 6)}...${member.wallet.substring(member.wallet.length - 4)}
                                 </div>
-                                <div class="burner-amount">${burner.burned.toLocaleString()}</div>
-                            </div>
+                                <div class="member-amount">${member.burned.toLocaleString()}</div>
+                            </a>
                         `).join('') : `
-                            <div style="text-align: center; color: #666; padding: 2rem; font-size: 0.9rem;">
-                                NO ELITE BURNERS DETECTED<br>
-                                <span style="color: #ff6b6b;">MINIMUM 10K TOKENS REQUIRED</span>
+                            <div class="empty-state">
+                                NO CABAL MEMBERS<br>
+                                <span style="color: #ff6b6b;">1M+ TOKENS REQUIRED</span>
+                            </div>
+                        `}
+                    </div>
+                </div>
+
+                <!-- Panel 2: PAYOUTS -->
+                <div class="panel">
+                    <div class="panel-title">PAYOUTS</div>
+                    <div class="payout-section">
+                        <div class="progress-container">
+                            <div class="progress-header">
+                                <span>PAYDAY PROGRESS</span>
+                                <span>${payoutProgress}/10 SOL</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: ${payoutProgress * 10}%"></div>
+                            </div>
+                            <div class="progress-text">${payoutProgress * 10}% COMPLETE</div>
+                        </div>
+                        <div class="payouts-list">
+                            <div class="payout-item">
+                                <span>Next Payout:</span>
+                                <span style="color: #ffff00">${10 - payoutProgress} SOL needed</span>
+                            </div>
+                            <div class="payout-item">
+                                <span>Last Payout:</span>
+                                <span style="color: #00ff41">--/--/----</span>
+                            </div>
+                            <div class="payout-item">
+                                <span>Total Distributed:</span>
+                                <span style="color: #00ff41">0 SOL</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Panel 3: OTHER MEMBERS -->
+                <div class="panel">
+                    <div class="panel-title">OTHER INITIATES</div>
+                    <div class="members-grid">
+                        ${otherMembers.length > 0 ? otherMembers.map((member, index) => `
+                            <a href="https://solscan.io/account/${member.wallet}" target="_blank" class="member-item" style="border-color: ${member.rank.color}">
+                                <div class="member-rank" style="background: ${member.rank.bg}; color: ${member.rank.color}">
+                                    ${member.rank.name.split(' ')[0]}
+                                </div>
+                                <div class="member-wallet" title="${member.wallet}">
+                                    ${member.wallet.substring(0, 6)}...${member.wallet.substring(member.wallet.length - 4)}
+                                </div>
+                                <div class="member-amount">${member.burned.toLocaleString()}</div>
+                            </a>
+                        `).join('') : `
+                            <div class="empty-state">
+                                NO OTHER INITIATES<br>
+                                <span style="color: #ff6b6b;">10K+ TOKENS REQUIRED</span>
                             </div>
                         `}
                     </div>
