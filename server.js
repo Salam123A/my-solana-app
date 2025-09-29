@@ -1,22 +1,21 @@
-import { Connection, PublicKey } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
 import express from "express";
 
-const RPC_ENDPOINT = "https://mainnet.helius-rpc.com/?api-key=07ed88b0-3573-4c79-8d62-3a2cbd5c141a";
-const connection = new Connection(RPC_ENDPOINT, { commitment: "confirmed" });
-const TOKEN_MINT = new PublicKey("47TE3qRYoWdGFcvafubPLHPtNmhRQtcTWDUWkLw4oNy8");
+const HELIUS_API_KEY = "07ed88b0-3573-4c79-8d62-3a2cbd5c141a";
+const TOKEN_MINT = "47TE3qRYoWdGFcvafubPLHPtNmhRQtcTWDUWkLw4oNy8";
 
 const app = express();
 
 // Cabal Ranks
 const CABAL_RANKS = [
-    { name: "Academy", min: 100000, max: 500000, reward: 0.01, color: "#4a5568" },
-    { name: "Clan", min: 500000, max: 1000000, reward: 0.1, color: "#2d3748" },
-    { name: "1st Royal Guard", min: 1000000, max: 2000000, reward: 0.2, color: "#2b6cb0" },
-    { name: "2nd Royal Guard", min: 2000000, max: 3000000, reward: 0.3, color: "#2c5aa0" },
-    { name: "1st Order of Knights", min: 3000000, max: 4000000, reward: 0.4, color: "#e53e3e" },
-    { name: "2nd Order of Knights", min: 4000000, max: 5000000, reward: 0.5, color: "#c53030" },
-    { name: "3rd Order of Knights", min: 5000000, max: 6000000, reward: 0.6, color: "#9b2c2c" },
-    { name: "4th Order of Knights", min: 6000000, max: 10000000, reward: 0.7, color: "#742a2a" },
+    { name: "Academy", min: 10000, max: 50000, reward: 0.01, color: "#4a5568" },
+    { name: "Clan", min: 50000, max: 100000, reward: 0.1, color: "#2d3748" },
+    { name: "1st Royal Guard", min: 100000, max: 200000, reward: 0.2, color: "#2b6cb0" },
+    { name: "2nd Royal Guard", min: 200000, max: 300000, reward: 0.3, color: "#2c5aa0" },
+    { name: "1st Order of Knights", min: 300000, max: 400000, reward: 0.4, color: "#e53e3e" },
+    { name: "2nd Order of Knights", min: 400000, max: 500000, reward: 0.5, color: "#c53030" },
+    { name: "3rd Order of Knights", min: 500000, max: 600000, reward: 0.6, color: "#9b2c2c" },
+    { name: "4th Order of Knights", min: 600000, max: 1000000, reward: 0.7, color: "#742a2a" },
     { name: "CABAL", min: 1000000, max: Infinity, reward: 1.0, color: "#000000" }
 ];
 
@@ -101,6 +100,7 @@ app.get("/", (req, res) => {
             <div class="header">
                 <div class="cabal-title">THE CABAL</div>
                 <div class="total-burned">Total Burned: ${totalBurned.toLocaleString()} tokens</div>
+                <div>Tracked Burners: ${burnTracker.size}</div>
             </div>
 
             <h3 style="color: gold;">ORGANIZATIONAL RANKS</h3>
@@ -119,119 +119,179 @@ app.get("/", (req, res) => {
     `);
 });
 
-// Scan token history for burn transactions
-async function scanTokenBurns() {
+// Get all token accounts for this mint in batch
+async function getAllTokenAccounts() {
     try {
-        console.log("🔍 Scanning token burn history...");
+        console.log("🔍 Getting all token accounts...");
         
-        // Get all signatures for this token mint
-        const signatures = await connection.getSignaturesForAddress(TOKEN_MINT, { limit: 1000 });
-        
-        for (const sig of signatures) {
-            if (processedSignatures.has(sig.signature)) continue;
-            
-            try {
-                const tx = await connection.getTransaction(sig.signature, {
-                    commitment: "confirmed",
-                    maxSupportedTransactionVersion: 0
-                });
-                
-                if (!tx?.meta) continue;
-                
-                // Analyze transaction for burns
-                const burns = analyzeTransactionForBurns(tx, sig.signature);
-                
-                for (const burn of burns) {
-                    const currentTotal = burnTracker.get(burn.wallet) || 0;
-                    burnTracker.set(burn.wallet, currentTotal + burn.amount);
-                    totalBurned += burn.amount;
-                    
-                    console.log(`🔥 ${burn.wallet} burned ${burn.amount} tokens`);
+        const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "getTokenAccounts",
+                params: {
+                    mint: TOKEN_MINT,
+                    page: 1,
+                    limit: 1000
                 }
-                
-                processedSignatures.add(sig.signature);
-            } catch (e) {
-                console.log('Error processing tx:', e.message);
+            })
+        });
+
+        const data = await response.json();
+        return data.result?.token_accounts || [];
+    } catch (e) {
+        console.log('Error getting token accounts:', e.message);
+        return [];
+    }
+}
+
+// Get transaction history for a wallet to find burns
+async function getWalletBurnHistory(wallet) {
+    try {
+        const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "getSignaturesForAddress",
+                params: [
+                    wallet,
+                    {
+                        limit: 100,
+                        commitment: "confirmed"
+                    }
+                ]
+            })
+        });
+
+        const data = await response.json();
+        const signatures = data.result || [];
+        
+        let totalBurned = 0;
+        
+        // Check each transaction for burns
+        for (const sig of signatures) {
+            const burnAmount = await checkTransactionForBurn(sig.signature, wallet);
+            totalBurned += burnAmount;
+        }
+        
+        return totalBurned;
+    } catch (e) {
+        console.log(`Error checking wallet ${wallet}:`, e.message);
+        return 0;
+    }
+}
+
+// Check if a transaction contains burns from this wallet
+async function checkTransactionForBurn(signature, wallet) {
+    try {
+        const response = await fetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "getTransaction",
+                params: [
+                    signature,
+                    {
+                        encoding: "jsonParsed",
+                        commitment: "confirmed"
+                    }
+                ]
+            })
+        });
+
+        const data = await response.json();
+        const tx = data.result;
+        
+        if (!tx?.meta) return 0;
+        
+        // Check pre/post token balances for this wallet
+        const preBalances = tx.meta.preTokenBalances || [];
+        const postBalances = tx.meta.postTokenBalances || [];
+        
+        const preBalance = preBalances.find(b => 
+            b.mint === TOKEN_MINT && b.owner === wallet
+        );
+        const postBalance = postBalances.find(b => 
+            b.mint === TOKEN_MINT && b.owner === wallet
+        );
+        
+        const preAmount = preBalance?.uiTokenAmount?.uiAmount || 0;
+        const postAmount = postBalance?.uiTokenAmount?.uiAmount || 0;
+        
+        // If tokens decreased and no other wallet received them, it's a burn
+        if (preAmount > postAmount) {
+            const burned = preAmount - postAmount;
+            
+            // Quick check: if no other wallet received significant amounts, count as burn
+            const otherReceivers = postBalances.filter(b => 
+                b.mint === TOKEN_MINT && b.owner !== wallet
+            );
+            
+            if (otherReceivers.length === 0) {
+                return burned;
+            }
+        }
+        
+        return 0;
+    } catch (e) {
+        return 0;
+    }
+}
+
+// Batch scan all holders for burns
+async function batchScanBurns() {
+    try {
+        console.log("🚀 Starting batch burn scan...");
+        
+        const tokenAccounts = await getAllTokenAccounts();
+        console.log(`📊 Found ${tokenAccounts.length} token accounts`);
+        
+        let processed = 0;
+        
+        for (const account of tokenAccounts) {
+            const wallet = account.owner;
+            
+            if (burnTracker.has(wallet)) {
+                processed++;
+                continue;
             }
             
-            // Small delay to avoid rate limits
+            const burned = await getWalletBurnHistory(wallet);
+            
+            if (burned > 0) {
+                burnTracker.set(wallet, burned);
+                totalBurned += burned;
+                console.log(`🔥 ${wallet} burned ${burned} tokens`);
+            }
+            
+            processed++;
+            
+            // Progress update
+            if (processed % 10 === 0) {
+                console.log(`⏳ Processed ${processed}/${tokenAccounts.length} accounts`);
+            }
+            
+            // Rate limiting
             await new Promise(r => setTimeout(r, 100));
         }
         
-        console.log(`✅ Scan complete. Found ${burnTracker.size} burners`);
+        console.log(`✅ Batch scan complete! Found ${burnTracker.size} burners`);
         
     } catch (e) {
-        console.log('Scan error:', e.message);
+        console.log('Batch scan error:', e.message);
     }
-}
-
-// Analyze transaction to find burns
-function analyzeTransactionForBurns(tx, signature) {
-    const burns = [];
-    
-    if (!tx.meta?.preTokenBalances || !tx.meta?.postTokenBalances) {
-        return burns;
-    }
-    
-    const preBalances = tx.meta.preTokenBalances;
-    const postBalances = tx.meta.postTokenBalances;
-    
-    // Find wallets that held this token before but not after (burned)
-    for (const preBalance of preBalances) {
-        if (preBalance.mint === TOKEN_MINT.toBase58()) {
-            const wallet = preBalance.owner;
-            const preAmount = preBalance.uiTokenAmount?.uiAmount || 0;
-            
-            // Find post balance for this wallet
-            const postBalance = postBalances.find(pb => 
-                pb.mint === TOKEN_MINT.toBase58() && pb.owner === wallet
-            );
-            const postAmount = postBalance?.uiTokenAmount?.uiAmount || 0;
-            
-            // If tokens decreased and weren't sent to another holder, it's a burn
-            if (preAmount > postAmount) {
-                const burnedAmount = preAmount - postAmount;
-                
-                // Verify this isn't just a transfer by checking if tokens went to another wallet
-                const tokensReceivedByOthers = postBalances
-                    .filter(pb => pb.mint === TOKEN_MINT.toBase58() && pb.owner !== wallet)
-                    .reduce((sum, pb) => sum + (pb.uiTokenAmount?.uiAmount || 0), 0);
-                
-                const tokensBeforeOthers = preBalances
-                    .filter(pb => pb.mint === TOKEN_MINT.toBase58() && pb.owner !== wallet)
-                    .reduce((sum, pb) => sum + (pb.uiTokenAmount?.uiAmount || 0), 0);
-                
-                const netTransfer = tokensReceivedByOthers - tokensBeforeOthers;
-                
-                // If the burned amount isn't accounted for by transfers, it's a burn
-                if (burnedAmount > netTransfer) {
-                    burns.push({
-                        wallet: wallet,
-                        amount: burnedAmount - Math.max(0, netTransfer),
-                        signature: signature
-                    });
-                }
-            }
-        }
-    }
-    
-    return burns;
-}
-
-const processedSignatures = new Set();
-
-// Initial scan and periodic rescan
-async function startScanner() {
-    await scanTokenBurns();
-    
-    // Rescan every 5 minutes
-    setInterval(async () => {
-        console.log("🔄 Rescanning for new burns...");
-        await scanTokenBurns();
-    }, 1 * 10 * 1000);
 }
 
 app.listen(1000, () => {
-    console.log('🔥 CABAL burn scanner at http://localhost:1000');
-    startScanner();
+    console.log('🔥 CABAL batch scanner at http://localhost:1000');
+    batchScanBurns();
+    
+    // Rescan every hour
+    setInterval(batchScanBurns, 60 * 60 * 1000);
 });
